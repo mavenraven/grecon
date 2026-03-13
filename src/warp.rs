@@ -78,92 +78,60 @@ pub fn switch_to_tab_number(n: u8) {
         return;
     }
     let script = format!(
-        r#"tell application "Warp" to activate
-delay 0.15
-tell application "System Events"
-    keystroke "{n}" using command down
-end tell"#
+        r#"tell application "System Events" to keystroke "{n}" using command down"#
     );
     let _ = std::process::Command::new("osascript")
         .args(["-e", &script])
         .output();
 }
 
-/// Get the titles of all Warp tabs via the Window menu's AX tree.
-/// Returns them in display order (matching Cmd+1, Cmd+2, ...).
-pub fn get_tab_titles() -> Vec<String> {
-    let pid = match find_warp_pid() {
-        Some(p) => p,
-        None => return vec![],
+/// Probe all Warp tabs by switching to each via Cmd+N and reading the window title.
+/// Returns Vec of (tab_position, title) where tab_position is 1-indexed.
+/// Switches back to `return_to_tab` when done.
+pub fn probe_tab_titles(return_to_tab: u8) -> Vec<(u8, String)> {
+    let script = r#"
+set tabTitles to ""
+tell application "System Events"
+    set lastTitle to ""
+    repeat with n from 1 to 9
+        keystroke (n as string) using command down
+        delay 0.05
+        tell process "Warp"
+            set t to name of window 1
+        end tell
+        if n > 1 and t = lastTitle then
+            exit repeat
+        end if
+        set tabTitles to tabTitles & n & "\t" & t & "\n"
+        set lastTitle to t
+    end repeat
+end tell
+return tabTitles
+"#;
+
+    let output = std::process::Command::new("osascript")
+        .args(["-e", script])
+        .output();
+
+    let result = match output {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).to_string(),
+        Err(_) => return vec![],
     };
-    let app = unsafe { AXUIElementCreateApplication(pid) };
-    if app.is_null() {
-        return vec![];
+
+    let tabs: Vec<(u8, String)> = result
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(2, '\t');
+            let pos: u8 = parts.next()?.parse().ok()?;
+            let title = parts.next()?.to_string();
+            Some((pos, title))
+        })
+        .collect();
+
+    // Switch back to the original tab
+    if return_to_tab >= 1 && return_to_tab <= 9 {
+        switch_to_tab_number(return_to_tab);
     }
 
-    let menu_bar = match get_attr_value(app, "AXMenuBar") {
-        Some(v) => v as AXUIElementRef,
-        None => return vec![],
-    };
-
-    let menu_bar_items = get_attr_children(menu_bar);
-    let window_menu_bar_item = match menu_bar_items.iter().find(|item| {
-        get_attr_string(**item, "AXTitle")
-            .map(|t| t == "Window")
-            .unwrap_or(false)
-    }) {
-        Some(item) => *item,
-        None => return vec![],
-    };
-
-    let submenus = get_attr_children(window_menu_bar_item);
-    let window_menu = match submenus.first() {
-        Some(m) => *m,
-        None => return vec![],
-    };
-
-    let mut titles = Vec::new();
-    for item in get_attr_children(window_menu) {
-        let id = get_attr_string(item, "AXIdentifier").unwrap_or_default();
-        if id == "makeKeyAndOrderFront:" {
-            let title = get_attr_string(item, "AXTitle").unwrap_or_default();
-            titles.push(title);
-        }
-    }
-    titles
-}
-
-fn find_warp_pid() -> Option<i32> {
-    let output = std::process::Command::new("ps")
-        .args(["-eo", "pid,comm"])
-        .output()
-        .ok()?;
-    let s = String::from_utf8_lossy(&output.stdout);
-    for line in s.lines() {
-        if line.contains("Warp.app") && !line.contains("terminal-server") {
-            return line.trim().split_whitespace().next()?.parse().ok();
-        }
-    }
-    None
-}
-
-fn _find_tab_menu_action(app: AXUIElementRef, action_title: &str) -> Option<AXUIElementRef> {
-    let menu_bar = get_attr_value(app, "AXMenuBar")? as AXUIElementRef;
-    let menu_bar_items = get_attr_children(menu_bar);
-
-    let tab_menu_item = menu_bar_items.iter().find(|item| {
-        get_attr_string(**item, "AXTitle")
-            .map(|t| t == "Tab")
-            .unwrap_or(false)
-    })?;
-
-    let submenus = get_attr_children(*tab_menu_item);
-    let tab_menu = *submenus.first()?;
-    let items = get_attr_children(tab_menu);
-
-    items.into_iter().find(|item| {
-        get_attr_string(*item, "AXTitle")
-            .map(|t| t == action_title)
-            .unwrap_or(false)
-    })
+    tabs
 }

@@ -95,10 +95,7 @@ pub fn resolve_sessions(
 
         let encoded = encode_project_path(&cwd);
         let project_dir = claude_dir.join(&encoded);
-        let project_name = Path::new(&cwd)
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| cwd.clone());
+        let project_name = shorten_path(&cwd);
 
         // Find the JSONL file
         let jsonl_path = find_jsonl(&project_dir, proc.session_id.as_deref());
@@ -134,8 +131,8 @@ pub fn resolve_sessions(
         sessions.push(Session {
             session_id,
             project_name,
-            tab_title: None, // populated later by App::refresh via warp::get_tab_titles
-            tab_number: proc.tab_number,
+            tab_title: None,
+            tab_number: None,
             model: model_id,
             total_input_tokens: input_tokens,
             total_output_tokens: output_tokens,
@@ -149,6 +146,17 @@ pub fn resolve_sessions(
     }
 
     sessions
+}
+
+/// Shorten a path by replacing the home directory with ~.
+fn shorten_path(path: &str) -> String {
+    if let Some(home) = dirs::home_dir() {
+        let home_str = home.to_string_lossy();
+        if let Some(rest) = path.strip_prefix(home_str.as_ref()) {
+            return format!("~{rest}");
+        }
+    }
+    path.to_string()
 }
 
 /// Encode a CWD path the same way Claude does for project directories.

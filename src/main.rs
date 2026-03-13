@@ -24,6 +24,7 @@ fn main() -> io::Result<()> {
 
     if json_mode {
         let mut app = App::new();
+        app.probe_tabs();
         app.refresh();
         let output = app.to_json();
         println!("{output}");
@@ -60,6 +61,7 @@ fn main() -> io::Result<()> {
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let mut app = App::new();
+    app.probe_tabs();
     app.refresh();
 
     let refresh_interval = Duration::from_secs(2);
