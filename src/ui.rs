@@ -95,14 +95,14 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Length(4),
-        Constraint::Length(16),
-        Constraint::Length(14),
-        Constraint::Min(20),
-        Constraint::Length(10),
-        Constraint::Length(20),
-        Constraint::Length(14),
-        Constraint::Length(14),
+        Constraint::Length(4),   // #
+        Constraint::Length(16),  // Session
+        Constraint::Min(20),    // Project (repo + branch)
+        Constraint::Length(20), // Directory
+        Constraint::Length(10), // Status
+        Constraint::Length(20), // Model
+        Constraint::Length(14), // Tokens
+        Constraint::Length(14), // Last Activity
     ];
 
     let table = Table::new(rows, widths)

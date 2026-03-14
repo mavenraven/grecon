@@ -156,7 +156,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             let cwd = info
                 .cwd
                 .unwrap_or_else(|| decode_project_path(&project_dir));
-            let project_name = shorten_path(&cwd);
+            let project_name = git_project_name(&cwd);
 
             let status = determine_status(
                 &path,
@@ -195,10 +195,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         if known_tmux.contains(&live.tmux_session) {
             continue;
         }
-        let project_name = std::path::Path::new(&live.pane_cwd)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| live.tmux_session.clone());
+        let project_name = git_project_name(&live.pane_cwd);
 
         sessions.push(Session {
             session_id: format!("tmux-{}", live.tmux_session),
@@ -218,7 +215,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
     }
 
     // Sort by creation time (oldest first)
-    sessions.sort_by_key(|s| s.started_at);
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.started_at));
     sessions
 }
 
@@ -279,15 +276,69 @@ struct ParsedInfo {
     file_size: u64,
 }
 
-/// Shorten a path by replacing the home directory with ~.
-fn shorten_path(path: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
-        let home_str = home.to_string_lossy();
-        if let Some(rest) = path.strip_prefix(home_str.as_ref()) {
-            return format!("~{rest}");
+use std::sync::Mutex;
+
+/// Get the git project name and branch for a directory.
+/// Returns "repo (branch)" for git repos, or the directory basename otherwise.
+/// Branch is not cached since it can change; repo root is cached.
+fn git_project_name(cwd: &str) -> String {
+    let repo_name = git_repo_name(cwd);
+    let branch = git_branch(cwd);
+    match branch {
+        Some(b) => format!("{repo_name} ({b})"),
+        None => repo_name,
+    }
+}
+
+static GIT_REPO_CACHE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+fn git_repo_name(cwd: &str) -> String {
+    {
+        let cache = GIT_REPO_CACHE.lock().unwrap();
+        if let Some(name) = cache.as_ref().and_then(|c| c.get(cwd)) {
+            return name.clone();
         }
     }
-    path.to_string()
+
+    let name = match std::process::Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--show-toplevel"])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            let toplevel = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            Path::new(&toplevel)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| cwd.to_string())
+        }
+        _ => Path::new(cwd)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| cwd.to_string()),
+    };
+
+    let mut cache = GIT_REPO_CACHE.lock().unwrap();
+    if cache.is_none() {
+        *cache = Some(HashMap::new());
+    }
+    cache.as_mut().unwrap().insert(cwd.to_string(), name.clone());
+    name
+}
+
+fn git_branch(cwd: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        None
+    } else {
+        Some(branch)
+    }
 }
 
 /// Decode an encoded project directory name back to a path.

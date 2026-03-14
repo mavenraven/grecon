@@ -165,16 +165,16 @@ else
     fi
 fi
 
-# --- Test 5: Sort by creation time ---
-# $S_NEW was created before $S_TWIN — it should appear first in the output
+# --- Test 5: Sort by creation time (newest first) ---
+# $S_TWIN was created after $S_NEW — it should appear first in the output
 json=$("$RECON" --json 2>/dev/null)
 idx_new=$(echo "$json" | jq -r --arg n "$S_NEW" '.sessions | to_entries[] | select(.value.tmux_session == $n) | .key')
 idx_twin=$(echo "$json" | jq -r --arg n "$S_TWIN" '.sessions | to_entries[] | select(.value.tmux_session == $n) | .key')
 
-if [[ -n "$idx_new" && -n "$idx_twin" ]] && (( idx_new < idx_twin )); then
-    report pass "Sort order: $S_NEW (idx=$idx_new) before $S_TWIN (idx=$idx_twin)"
+if [[ -n "$idx_new" && -n "$idx_twin" ]] && (( idx_twin < idx_new )); then
+    report pass "Sort order: $S_TWIN (idx=$idx_twin) before $S_NEW (idx=$idx_new) — newest first"
 else
-    report fail "Sort order: expected $S_NEW before $S_TWIN (got idx_new=$idx_new idx_twin=$idx_twin)"
+    report fail "Sort order: expected $S_TWIN before $S_NEW (got idx_twin=$idx_twin idx_new=$idx_new)"
 fi
 
 # --- Test 6: Input state (permission prompt) ---
