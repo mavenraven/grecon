@@ -1,4 +1,5 @@
 mod app;
+mod history;
 mod model;
 mod new_session;
 mod session;
@@ -45,6 +46,23 @@ fn main() -> io::Result<()> {
                 Err(e) => {
                     eprintln!("Error: {e}");
                     std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+        Some("resume") => {
+            // Interactive resume picker from history
+            let result = history::run_resume_picker()?;
+            if let Some((session_id, name)) = result {
+                match tmux::resume_session(&session_id, Some(&name)) {
+                    Ok(sess) => {
+                        tmux::switch_to_session(&sess);
+                        eprintln!("Resumed in session: {sess}");
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {e}");
+                        std::process::exit(1);
+                    }
                 }
             }
             return Ok(());

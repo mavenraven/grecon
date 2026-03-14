@@ -16,23 +16,6 @@ pub fn switch_to_session(name: &str) {
     }
 }
 
-/// The shell snippet appended after the claude command. When claude exits, it
-/// finds the session file created during this invocation and shows the resume
-/// command in the tmux status bar.
-const EXIT_SNIPPET: &str = r#"
-for f in ~/.claude/sessions/*.json; do
-  [ "$f" -nt "$_RECON_MARKER" ] || continue
-  SID=$(jq -r '.sessionId // empty' "$f" 2>/dev/null)
-  if [ -n "$SID" ]; then
-    # Fire display-message after a short delay so it appears on the NEXT session
-    # the user lands on (this session is about to close).
-    (sleep 1 && tmux display-message -d 0 "recon --resume $SID") &
-    break
-  fi
-done
-rm -f "$_RECON_MARKER"
-"#;
-
 /// Launch claude in a new tmux session with the given name and working directory.
 /// Returns the session name on success.
 pub fn create_session(name: &str, cwd: &str) -> Result<String, String> {
@@ -40,9 +23,6 @@ pub fn create_session(name: &str, cwd: &str) -> Result<String, String> {
     let session_name = unique_session_name(&base_name);
 
     let claude_path = which_claude().unwrap_or_else(|| "claude".to_string());
-    let wrapper = format!(
-        "_RECON_MARKER=$(mktemp); \"{claude_path}\"; {EXIT_SNIPPET}"
-    );
     let status = Command::new("tmux")
         .args([
             "new-session",
@@ -51,9 +31,7 @@ pub fn create_session(name: &str, cwd: &str) -> Result<String, String> {
             &session_name,
             "-c",
             cwd,
-            "bash",
-            "-c",
-            &wrapper,
+            &claude_path,
         ])
         .status()
         .map_err(|e| format!("Failed to create tmux session: {e}"))?;
@@ -83,9 +61,6 @@ pub fn resume_session(session_id: &str, name: Option<&str>) -> Result<String, St
     // Store the original session-id in the tmux session environment so recon can
     // find the right JSONL without parsing process command lines.
     let env_var = format!("RECON_RESUMED_FROM={session_id}");
-    let wrapper = format!(
-        "_RECON_MARKER=$(mktemp); \"{claude_path}\" --resume \"{session_id}\"; {EXIT_SNIPPET}"
-    );
     let status = Command::new("tmux")
         .args([
             "new-session",
@@ -96,9 +71,9 @@ pub fn resume_session(session_id: &str, name: Option<&str>) -> Result<String, St
             &cwd,
             "-e",
             &env_var,
-            "bash",
-            "-c",
-            &wrapper,
+            &claude_path,
+            "--resume",
+            session_id,
         ])
         .status()
         .map_err(|e| format!("Failed to create tmux session: {e}"))?;
