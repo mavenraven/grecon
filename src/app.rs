@@ -64,6 +64,14 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('x') => {
+                if let Some(session) = self.sessions.get(self.selected) {
+                    if let Some(name) = &session.tmux_session {
+                        tmux::kill_session(name);
+                        self.refresh();
+                    }
+                }
+            }
             KeyCode::Char('r') => {
                 self.refresh();
             }

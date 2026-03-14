@@ -127,6 +127,15 @@ fn which_claude() -> Option<String> {
     if path.is_empty() { None } else { Some(path) }
 }
 
+/// Kill a tmux session by name.
+pub fn kill_session(name: &str) -> bool {
+    Command::new("tmux")
+        .args(["kill-session", "-t", name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Sanitize a string for use as a tmux session name (no dots or colons).
 fn sanitize_session_name(name: &str) -> String {
     name.replace('.', "-").replace(':', "-")

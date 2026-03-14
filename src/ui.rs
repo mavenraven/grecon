@@ -146,6 +146,8 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
         Span::raw(" navigate  "),
         Span::styled("Enter", Style::default().fg(Color::Cyan)),
         Span::raw(" switch  "),
+        Span::styled("x", Style::default().fg(Color::Cyan)),
+        Span::raw(" kill  "),
         Span::styled("r", Style::default().fg(Color::Cyan)),
         Span::raw(" refresh  "),
         Span::styled("q", Style::default().fg(Color::Cyan)),
