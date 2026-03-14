@@ -1,30 +1,4 @@
-use std::collections::HashMap;
 use std::process::Command;
-
-/// Map from TTY (e.g. "ttys010") to tmux session name.
-pub fn tty_to_session_map() -> HashMap<String, String> {
-    let output = match Command::new("tmux")
-        .args(["list-panes", "-a", "-F", "#{session_name}\t#{pane_tty}"])
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return HashMap::new(),
-    };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut map = HashMap::new();
-
-    for line in stdout.lines() {
-        let mut parts = line.splitn(2, '\t');
-        if let (Some(session), Some(tty)) = (parts.next(), parts.next()) {
-            // pane_tty is like "/dev/ttys010", ps shows "ttys010"
-            let tty_short = tty.strip_prefix("/dev/").unwrap_or(tty);
-            map.insert(tty_short.to_string(), session.to_string());
-        }
-    }
-
-    map
-}
 
 /// Switch to a tmux session.
 pub fn switch_to_session(name: &str) {

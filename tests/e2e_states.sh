@@ -4,7 +4,7 @@ set -euo pipefail
 RECON="$(cd "$(dirname "$0")/.." && pwd)/target/debug/recon"
 PASS=0
 FAIL=0
-TOTAL=5
+TOTAL=6
 
 # Random 4-char ID to avoid collisions with real sessions
 RID=$(head -c 100 /dev/urandom | LC_ALL=C tr -dc 'a-z0-9' | head -c 4)
@@ -110,6 +110,8 @@ fi
 
 # --- Test 2: Working state ---
 # Any prompt triggers Working during streaming. Use one that takes a few seconds.
+# Wait for the TUI to be fully ready for input (status bar shows "? for shortcuts")
+sleep 3
 send_to_session "$S_NEW" "write a 200 word essay about the history of unix"
 
 if wait_for_state "$S_NEW" "Working" 15; then
@@ -132,6 +134,7 @@ create_session "$S_TWIN" "$TMPDIR_NEW"
 wait_for_state "$S_TWIN" "New" 15 >/dev/null 2>&1 || true
 
 # Send a different prompt to the twin so it gets different token counts
+sleep 3
 send_to_session "$S_TWIN" "say exactly: hello world"
 wait_for_state "$S_TWIN" "Idle" 20 >/dev/null 2>&1 || true
 
@@ -162,12 +165,25 @@ else
     fi
 fi
 
-# --- Test 5: Input state (permission prompt) ---
+# --- Test 5: Sort by creation time ---
+# $S_NEW was created before $S_TWIN — it should appear first in the output
+json=$("$RECON" --json 2>/dev/null)
+idx_new=$(echo "$json" | jq -r --arg n "$S_NEW" '.sessions | to_entries[] | select(.value.tmux_session == $n) | .key')
+idx_twin=$(echo "$json" | jq -r --arg n "$S_TWIN" '.sessions | to_entries[] | select(.value.tmux_session == $n) | .key')
+
+if [[ -n "$idx_new" && -n "$idx_twin" ]] && (( idx_new < idx_twin )); then
+    report pass "Sort order: $S_NEW (idx=$idx_new) before $S_TWIN (idx=$idx_twin)"
+else
+    report fail "Sort order: expected $S_NEW before $S_TWIN (got idx_new=$idx_new idx_twin=$idx_twin)"
+fi
+
+# --- Test 6: Input state (permission prompt) ---
 create_session "$S_INPUT" "$TMPDIR_INPUT"
 
 # Wait for it to start
 wait_for_state "$S_INPUT" "New" 15 >/dev/null 2>&1 || true
 
+sleep 3
 send_to_session "$S_INPUT" "please create a new file at $TMPFILE with the text hello"
 
 if wait_for_state "$S_INPUT" "Input" 30; then

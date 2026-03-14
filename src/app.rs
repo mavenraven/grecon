@@ -92,6 +92,7 @@ impl App {
                     "status": s.status.label(),
                     "pid": s.pid,
                     "last_activity": s.last_activity,
+                    "started_at": s.started_at,
                 })
             })
             .collect();
