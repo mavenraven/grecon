@@ -53,6 +53,7 @@ pub fn create_session(name: &str, cwd: &str) -> Result<String, String> {
         return Err("tmux new-session failed".to_string());
     }
 
+    set_resume_on_exit_hook(&session_name);
     Ok(session_name)
 }
 
@@ -107,6 +108,7 @@ pub fn resume_session(session_id: &str, name: Option<&str>) -> Result<String, St
         return Err("tmux new-session failed".to_string());
     }
 
+    set_resume_on_exit_hook(&session_name);
     Ok(session_name)
 }
 
@@ -141,5 +143,19 @@ fn which_claude() -> Option<String> {
 /// Sanitize a string for use as a tmux session name (no dots or colons).
 fn sanitize_session_name(name: &str) -> String {
     name.replace('.', "-").replace(':', "-")
+}
+
+/// When the pane (claude process) exits, read the session-id from
+/// ~/.claude/sessions/<PID>.json and display "recon --resume <id>" in the
+/// tmux status bar of whichever session the user lands on next.
+fn set_resume_on_exit_hook(session_name: &str) {
+    // #{pane_pid} is expanded by tmux when the hook fires.
+    let hook_cmd = "run-shell '\
+        SID=$(jq -r .sessionId ~/.claude/sessions/#{pane_pid}.json 2>/dev/null); \
+        [ -n \"$SID\" ] && tmux display-message -d 0 \"recon --resume $SID\"\
+    '";
+    let _ = Command::new("tmux")
+        .args(["set-hook", "-t", session_name, "pane-exited", hook_cmd])
+        .status();
 }
 
