@@ -392,18 +392,32 @@ fn parse_jsonl(
     }
 }
 
-/// Determine session status from the last JSONL entry.
+/// Determine session status from the last JSONL entry and file recency.
 fn determine_status_from_file(path: &Path) -> SessionStatus {
-    // Read last ~4KB to find the last meaningful entry
     let file = match fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return SessionStatus::Idle,
     };
-    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let meta = match file.metadata() {
+        Ok(m) => m,
+        Err(_) => return SessionStatus::Idle,
+    };
+    let file_size = meta.len();
     if file_size == 0 {
         return SessionStatus::Idle;
     }
 
+    // If the file hasn't been modified in the last 30 seconds,
+    // the session is idle regardless of what the last entry says.
+    if let Ok(modified) = meta.modified() {
+        if let Ok(elapsed) = modified.elapsed() {
+            if elapsed > Duration::from_secs(5) {
+                return SessionStatus::Idle;
+            }
+        }
+    }
+
+    // Read last ~4KB to find the last meaningful entry
     let mut reader = BufReader::new(file);
     let start = if file_size > 4096 { file_size - 4096 } else { 0 };
     let _ = reader.seek(SeekFrom::Start(start));
