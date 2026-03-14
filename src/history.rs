@@ -24,6 +24,8 @@ pub struct ResumeEntry {
     pub session_id: String,
     pub cwd: String,
     pub started_at: u64,
+    /// JSONL modification time (ms) — proxy for "last closed".
+    pub last_active_ms: u64,
     pub model: Option<String>,
     pub tokens: u64,
 }
@@ -85,8 +87,8 @@ fn find_resumable_sessions() -> Vec<ResumeEntry> {
             continue;
         }
 
-        // Try to get model/tokens from the JSONL
-        let (model, tokens) = read_jsonl_summary(&home, &session_id);
+        // Try to get model/tokens/mtime from the JSONL
+        let (model, tokens, last_active_ms) = read_jsonl_summary(&home, &session_id);
 
         // Skip sessions with no activity
         if tokens == 0 {
@@ -97,13 +99,14 @@ fn find_resumable_sessions() -> Vec<ResumeEntry> {
             session_id,
             cwd,
             started_at,
+            last_active_ms,
             model,
             tokens,
         });
     }
 
-    // Deduplicate by session_id (keep the one with highest started_at)
-    results.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    // Sort by last active (most recently closed first)
+    results.sort_by(|a, b| b.last_active_ms.cmp(&a.last_active_ms));
     let mut seen = HashSet::new();
     results.retain(|e| seen.insert(e.session_id.clone()));
 
@@ -119,11 +122,12 @@ fn get_live_session_ids() -> HashSet<String> {
 }
 
 /// Read model and total tokens from the JSONL file for a session.
-fn read_jsonl_summary(home: &std::path::Path, session_id: &str) -> (Option<String>, u64) {
+/// Returns (model, total_tokens, last_modified_ms).
+fn read_jsonl_summary(home: &std::path::Path, session_id: &str) -> (Option<String>, u64, u64) {
     let projects_dir = home.join(".claude").join("projects");
     let entries = match fs::read_dir(&projects_dir) {
         Ok(e) => e,
-        Err(_) => return (None, 0),
+        Err(_) => return (None, 0, 0),
     };
 
     for entry in entries.flatten() {
@@ -132,9 +136,17 @@ fn read_jsonl_summary(home: &std::path::Path, session_id: &str) -> (Option<Strin
             continue;
         }
 
+        let mtime_ms = jsonl
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
         let content = match fs::read_to_string(&jsonl) {
             Ok(c) => c,
-            Err(_) => return (None, 0),
+            Err(_) => return (None, 0, mtime_ms),
         };
 
         let mut model = None;
@@ -164,9 +176,9 @@ fn read_jsonl_summary(home: &std::path::Path, session_id: &str) -> (Option<Strin
             }
         }
 
-        return (model, input_tokens + output_tokens);
+        return (model, input_tokens + output_tokens, mtime_ms);
     }
-    (None, 0)
+    (None, 0, 0)
 }
 
 /// Interactive TUI picker for resuming a past session.
@@ -192,7 +204,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                 Cell::from("Directory"),
                 Cell::from("Model"),
                 Cell::from("Tokens"),
-                Cell::from("Started"),
+                Cell::from("Last Active"),
                 Cell::from("Session ID"),
             ])
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
@@ -209,7 +221,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
 
                     let tokens = format!("{}k", e.tokens / 1000);
                     let dir = dir_name(&e.cwd);
-                    let started = format_relative_ms(e.started_at);
+                    let started = format_relative_ms(e.last_active_ms);
                     let short_id = &e.session_id[..8.min(e.session_id.len())];
 
                     let row = Row::new(vec![
