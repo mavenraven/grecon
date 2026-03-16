@@ -3,6 +3,7 @@ mod cli;
 mod history;
 mod model;
 mod new_session;
+mod park;
 mod session;
 mod tmux;
 mod ui;
@@ -93,6 +94,12 @@ fn main() -> io::Result<()> {
             let mut app = App::new();
             app.refresh();
             println!("{}", app.to_json());
+        }
+        Some(Command::Park) => {
+            park::park();
+        }
+        Some(Command::Unpark) => {
+            park::unpark();
         }
         Some(Command::View) | None => {
             let start_mode = if matches!(cli.command, Some(Command::View)) {

@@ -108,6 +108,8 @@ recon resume                                 # Interactive resume picker
 recon resume --id <session-id>               # Resume a specific session
 recon resume --id <session-id> --name foo    # Resume with a custom tmux session name
 recon next                                   # Jump to the next agent waiting for input
+recon park                                   # Save all live sessions to disk
+recon unpark                                 # Restore previously parked sessions
 ```
 
 ### Keybindings — Table View
@@ -161,6 +163,7 @@ This lets you pop open the dashboard from any tmux session, pick a session with 
 - **Model display** — shows which Claude model and effort level
 - **Resume picker** — `recon resume` scans JSONL files for past sessions, resume any with `Enter`
 - **Multi-session** — handles multiple sessions in the same repo without conflicts
+- **Park / unpark** — `recon park` saves all sessions to disk, `recon unpark` restores them after a tmux restart
 - **JSON mode** — `recon json` for scripting and automation
 - **Claude Code skill** — ships a [skill file](.claude/skills/recon/SKILL.md) so Claude Code can discover and run recon commands
 

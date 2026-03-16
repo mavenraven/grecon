@@ -655,6 +655,28 @@ pub fn build_live_session_map_public() -> HashMap<String, String> {
         .collect()
 }
 
+/// Check if a session ID (JSONL-based) is already running in tmux.
+/// Returns the tmux session name if found.
+pub fn find_live_tmux_for_session(session_id: &str) -> Option<String> {
+    let live_map = build_live_session_map();
+
+    // Direct match: PID file's session_id == the one we're looking for.
+    if let Some(info) = live_map.get(session_id) {
+        return Some(info.tmux_session.clone());
+    }
+
+    // Resumed session: RECON_RESUMED_FROM env var matches.
+    for (_, info) in &live_map {
+        if let Some(orig_id) = read_tmux_env(&info.tmux_session, "RECON_RESUMED_FROM") {
+            if orig_id == session_id {
+                return Some(info.tmux_session.clone());
+            }
+        }
+    }
+
+    None
+}
+
 pub fn find_session_cwd(session_id: &str) -> Option<String> {
     let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
     for entry in fs::read_dir(&projects_dir).ok()?.flatten() {

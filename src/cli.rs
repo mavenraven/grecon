@@ -36,4 +36,8 @@ pub enum Command {
     },
     /// Print all session state as JSON
     Json,
+    /// Save all live sessions to disk for restoring later
+    Park,
+    /// Restore previously parked sessions
+    Unpark,
 }

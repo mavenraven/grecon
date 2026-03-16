@@ -4,7 +4,7 @@ set -euo pipefail
 RECON="$(cd "$(dirname "$0")/.." && pwd)/target/debug/recon"
 PASS=0
 FAIL=0
-TOTAL=7
+TOTAL=8
 
 # Random 4-char ID to avoid collisions with real sessions
 RID=$(head -c 100 /dev/urandom | LC_ALL=C tr -dc 'a-z0-9' | head -c 4)
@@ -254,6 +254,21 @@ else
             '.sessions[] | select(.tmux_session == $n)' | sed 's/^/    /'
         report fail "Resume: expected non-zero tokens for resumed session"
     fi
+fi
+
+# --- Test 8: Resume idempotency (no-op if already running) ---
+# The resumed session from Test 7 ($S_RESUME_NEW) should still be live.
+# Resuming it again should NOT create a new tmux session.
+SESSIONS_BEFORE=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^e2e-${RID}-" | wc -l | tr -d ' ')
+
+RESUME_OUTPUT=$("$RECON" resume --id "$ORIG_SESSION_ID" --name "$S_RESUME_NEW" --no-attach 2>&1 || true)
+
+SESSIONS_AFTER=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^e2e-${RID}-" | wc -l | tr -d ' ')
+
+if (( SESSIONS_BEFORE == SESSIONS_AFTER )); then
+    report pass "Resume idempotency: no new session created (before=$SESSIONS_BEFORE, after=$SESSIONS_AFTER)"
+else
+    report fail "Resume idempotency: session count changed (before=$SESSIONS_BEFORE, after=$SESSIONS_AFTER)"
 fi
 
 # --- Summary ---
