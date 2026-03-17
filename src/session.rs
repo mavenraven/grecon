@@ -195,6 +195,51 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         }
     }
 
+    // Post-scan fixup: /clear creates a new JSONL without updating {PID}.json,
+    // so the first scan matches the OLD JSONL while the new one is ignored. For each
+    // matched session, check if there's a more recently modified unmatched JSONL in the
+    // same project directory that is ACTIVELY being written to (modified within last 10s).
+    // The "actively written" check prevents switching to dead sessions' stale JONLs that
+    // happen to be newer than an idle session's JSONL.
+    for session in &mut sessions {
+        let jsonl_mtime = session
+            .jsonl_path
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok());
+        if let Some(newer) =
+            find_recent_unmatched_jsonl(&session.cwd, &matched_session_ids)
+        {
+            let newer_mtime = newer.metadata().ok().and_then(|m| m.modified().ok());
+            if let (Some(cur), Some(new)) = (jsonl_mtime, newer_mtime) {
+                // Only switch if the newer JSONL is both:
+                // 1. More recent than our current JSONL
+                // 2. Actively being written to (modified in last 10s)
+                let is_active = new
+                    .elapsed()
+                    .map_or(false, |age| age < Duration::from_secs(10));
+                if new > cur && is_active {
+                    let info = parse_jsonl(&newer, 0, 0, 0, None, None);
+                    let new_sid = newer
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    matched_session_ids.remove(&session.session_id);
+                    matched_session_ids.insert(new_sid);
+                    session.total_input_tokens = info.input_tokens;
+                    session.total_output_tokens = info.output_tokens;
+                    session.model = info.model;
+                    session.last_activity = info.last_activity;
+                    session.last_file_size = info.file_size;
+                    session.jsonl_path = newer;
+                    if let Some(cwd) = info.cwd {
+                        session.cwd = cwd;
+                    }
+                }
+            }
+        }
+    }
+
     // Handle live sessions with no direct JSONL name match.
     // This covers two cases:
     //   1. Brand-new sessions (no JSONL yet) → show as New placeholder
@@ -211,20 +256,55 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         }
 
         // For sessions that have a real session-id (not the "tmux-{name}" placeholder),
-        // try to find the JSONL via lsof. This handles resumed sessions where the
-        // session file's session-id doesn't match the original JSONL filename.
+        // try to find the JSONL via resume detection. This handles resumed sessions
+        // where the session file's session-id doesn't match the original JSONL filename.
+        //
+        // However, if the session was /reset after being resumed, the ps args still
+        // show the old --resume ID while a new JSONL exists. In that case, the resume
+        // JSONL is stale. We detect this: if the resumed JSONL's session-id matches
+        // the session_id_key (from {PID}.json), the resume is current; otherwise
+        // /reset happened and we skip the stale resume path.
         let jsonl_path = if !session_id_key.starts_with("tmux-") {
-            // Check prev_sessions cache first to avoid repeated ps calls
             let cached = prev_sessions
                 .get(session_id_key.as_str())
                 .filter(|s| !s.jsonl_path.as_os_str().is_empty())
                 .map(|s| s.jsonl_path.clone());
-            cached.or_else(|| find_jsonl_for_resumed_session(&live.tmux_session, live.pid))
+            let resume_path = cached.or_else(|| find_jsonl_for_resumed_session(&live.tmux_session, live.pid));
+            // If the resume path points to a JSONL whose name differs from both the
+            // session_id_key AND hasn't been modified recently, /reset likely happened.
+            // Check: if the resume JSONL filename stem != session_id_key AND the
+            // session file's session-id also != the resume stem, this is a stale
+            // resume after /reset. Skip it so the CWD fallback can find the real JSONL.
+            resume_path.filter(|p| {
+                let stem = p.file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                // If the JSONL name matches the session-id, it's a straightforward
+                // resumed session (not yet /reset).
+                stem == *session_id_key
+                    // Otherwise check if the JSONL was modified in the last 30s
+                    // (still actively being written to).
+                    || p.metadata().ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.elapsed().ok())
+                        .map_or(false, |age| age < Duration::from_secs(30))
+            })
         } else {
             None
         };
 
-        if let Some(path) = jsonl_path {
+        // Try resumed session JSONL, then /reset fallback, then New placeholder
+        let resolved_path = jsonl_path
+            .or_else(|| find_recent_unmatched_jsonl(&live.pane_cwd, &matched_session_ids));
+
+        // Mark as claimed so other sessions in the same dir don't grab the same JSONL
+        if let Some(ref path) = resolved_path {
+            if let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().to_string()) {
+                matched_session_ids.insert(stem);
+            }
+        }
+
+        if let Some(path) = resolved_path {
             let prev = prev_sessions.get(session_id_key.as_str());
             let info = parse_jsonl(
                 &path,
@@ -630,6 +710,53 @@ fn parse_resume_id_from_ps(pid: i32) -> Option<String> {
         .nth(1)
         .map(|s| s.to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// Encode a CWD path to a Claude project directory name.
+/// Claude Code replaces both `/` and `.` with `-`.
+fn encode_project_path(cwd: &str) -> String {
+    cwd.replace('/', "-").replace('.', "-")
+}
+
+/// Find the most recently modified JSONL in the project directory for `cwd`
+/// whose session ID is not already claimed by another live session.
+///
+/// This handles `/reset` (and `/clear`): Claude Code creates a new session ID
+/// and JSONL but does NOT update `{PID}.json`, so the live map points at a
+/// stale session ID with no matching JSONL file.
+fn find_recent_unmatched_jsonl(
+    cwd: &str,
+    matched_session_ids: &std::collections::HashSet<String>,
+) -> Option<PathBuf> {
+    let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
+    let project_dir = projects_dir.join(encode_project_path(cwd));
+
+    if !project_dir.is_dir() {
+        return None;
+    }
+
+    let mut best: Option<(PathBuf, SystemTime)> = None;
+    for entry in fs::read_dir(&project_dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+            continue;
+        }
+        let session_id = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if matched_session_ids.contains(&session_id) {
+            continue;
+        }
+        let modified = match path.metadata().ok().and_then(|m| m.modified().ok()) {
+            Some(t) => t,
+            None => continue,
+        };
+        if best.as_ref().map_or(true, |(_, t)| modified > *t) {
+            best = Some((path, modified));
+        }
+    }
+    best.map(|(p, _)| p)
 }
 
 /// Find the JSONL file for a given session-id by scanning all project directories.
