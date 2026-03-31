@@ -10,14 +10,29 @@ use crate::app::App;
 use crate::session::SessionStatus;
 
 pub fn render(frame: &mut Frame, app: &App) {
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(frame.area());
+    let show_search = app.filter_active || !app.filter_text.is_empty();
+    let chunks = if show_search {
+        Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .split(frame.area())
+    } else {
+        Layout::vertical([
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(frame.area())
+    };
 
     render_table(frame, app, chunks[0]);
-    render_footer(frame, chunks[1]);
+    if show_search {
+        render_search_bar(frame, app, chunks[1]);
+        render_footer(frame, app, chunks[2]);
+    } else {
+        render_footer(frame, app, chunks[1]);
+    }
 }
 
 fn render_table(frame: &mut Frame, app: &App, area: Rect) {
@@ -37,12 +52,13 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
             .add_modifier(Modifier::BOLD),
     );
 
-    let rows: Vec<Row> = app
-        .sessions
+    let filtered = app.filtered_indices();
+    let rows: Vec<Row> = filtered
         .iter()
         .enumerate()
-        .map(|(i, session)| {
-            let num = format!(" {} ", i + 1);
+        .map(|(display_idx, &real_idx)| {
+            let session = &app.sessions[real_idx];
+            let num = format!(" {} ", real_idx + 1);
 
             let tmux_name = session
                 .tmux_session
@@ -114,7 +130,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
 
             if session.status == SessionStatus::Input {
                 row.style(Style::default().bg(Color::Rgb(50, 40, 0)))
-            } else if i == app.selected {
+            } else if display_idx == app.selected {
                 row.style(Style::default().bg(Color::DarkGray))
             } else {
                 row
@@ -144,21 +160,55 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(table, area);
 }
 
-fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("j/k", Style::default().fg(Color::Cyan)),
-        Span::raw(" navigate  "),
-        Span::styled("Enter", Style::default().fg(Color::Cyan)),
-        Span::raw(" switch  "),
-        Span::styled("x", Style::default().fg(Color::Cyan)),
-        Span::raw(" kill  "),
-        Span::styled("v", Style::default().fg(Color::Cyan)),
-        Span::raw(" view  "),
-        Span::styled("i", Style::default().fg(Color::Cyan)),
-        Span::raw(" next input  "),
-        Span::styled("q", Style::default().fg(Color::Cyan)),
-        Span::raw(" quit"),
-    ]));
+fn render_search_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let mut spans = vec![
+        Span::styled("/", Style::default().fg(Color::Cyan)),
+        Span::raw(&app.filter_text),
+    ];
+    if !app.filter_active && !app.filter_text.is_empty() {
+        let count = app.filtered_indices().len();
+        spans.push(Span::styled(
+            format!("  ({} match{})", count, if count == 1 { "" } else { "es" }),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    let paragraph = Paragraph::new(Line::from(spans));
+    frame.render_widget(paragraph, area);
+
+    if app.filter_active {
+        frame.set_cursor_position((area.x + 1 + app.filter_cursor as u16, area.y));
+    }
+}
+
+fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let spans = if app.filter_active {
+        vec![
+            Span::styled("Esc", Style::default().fg(Color::Cyan)),
+            Span::raw(" clear  "),
+            Span::styled("Enter", Style::default().fg(Color::Cyan)),
+            Span::raw(" keep filter  "),
+            Span::styled("j/k", Style::default().fg(Color::Cyan)),
+            Span::raw(" navigate"),
+        ]
+    } else {
+        vec![
+            Span::styled("j/k", Style::default().fg(Color::Cyan)),
+            Span::raw(" navigate  "),
+            Span::styled("Enter", Style::default().fg(Color::Cyan)),
+            Span::raw(" switch  "),
+            Span::styled("x", Style::default().fg(Color::Cyan)),
+            Span::raw(" kill  "),
+            Span::styled("/", Style::default().fg(Color::Cyan)),
+            Span::raw(" search  "),
+            Span::styled("v", Style::default().fg(Color::Cyan)),
+            Span::raw(" view  "),
+            Span::styled("i", Style::default().fg(Color::Cyan)),
+            Span::raw(" next input  "),
+            Span::styled("q", Style::default().fg(Color::Cyan)),
+            Span::raw(" quit"),
+        ]
+    };
+    let footer = Paragraph::new(Line::from(spans));
     frame.render_widget(footer, area);
 }
 
