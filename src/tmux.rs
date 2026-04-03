@@ -20,6 +20,10 @@ pub fn switch_to_pane(target: &str) {
 /// Launch claude in a new tmux session with the given name and working directory.
 /// Returns the session name on success.
 pub fn create_session(name: &str, cwd: &str) -> Result<String, String> {
+    if !session::validate_cwd(cwd) {
+        return Err(format!("Invalid working directory: {cwd}"));
+    }
+
     let base_name = sanitize_session_name(name);
     let session_name = unique_session_name(&base_name);
 
@@ -56,7 +60,9 @@ pub fn resume_session(session_id: &str, name: Option<&str>) -> Result<String, St
         .unwrap_or_else(|| session_id[..6.min(session_id.len())].to_string());
 
     // Use the original session's cwd so we start in the right project directory.
+    // Validate before use — fall back to current dir if the JSONL cwd is invalid.
     let cwd = session::find_session_cwd(session_id)
+        .filter(|c| session::validate_cwd(c))
         .or_else(|| std::env::current_dir().map(|p| p.to_string_lossy().to_string()).ok())
         .unwrap_or_else(|| ".".to_string());
 
@@ -142,7 +148,63 @@ pub fn kill_session(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Sanitize a string for use as a tmux session name (no dots or colons).
+/// Sanitize a string for use as a tmux session name.
+/// Uses an allowlist (alphanumeric, `-`, `_`) to prevent injection via
+/// crafted directory names. Leading dashes are stripped to avoid flag injection.
 fn sanitize_session_name(name: &str) -> String {
-    name.replace('.', "-").replace(':', "-")
+    let sanitized: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '-' })
+        .collect();
+
+    let trimmed = sanitized.trim_start_matches('-');
+
+    if trimmed.is_empty() {
+        "claude".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_normal_name() {
+        assert_eq!(sanitize_session_name("my-project"), "my-project");
+        assert_eq!(sanitize_session_name("foo_bar"), "foo_bar");
+    }
+
+    #[test]
+    fn sanitize_dots_and_colons() {
+        assert_eq!(sanitize_session_name("my.project:1"), "my-project-1");
+    }
+
+    #[test]
+    fn sanitize_shell_metacharacters() {
+        assert_eq!(sanitize_session_name("$HOME;rm -rf /"), "HOME-rm--rf--");
+    }
+
+    #[test]
+    fn sanitize_control_chars() {
+        assert_eq!(sanitize_session_name("hello\x00\x1bworld"), "hello--world");
+    }
+
+    #[test]
+    fn sanitize_leading_dashes_stripped() {
+        assert_eq!(sanitize_session_name("--flag"), "flag");
+        assert_eq!(sanitize_session_name("...name"), "name");
+    }
+
+    #[test]
+    fn sanitize_all_special_becomes_claude() {
+        assert_eq!(sanitize_session_name("..."), "claude");
+        assert_eq!(sanitize_session_name(""), "claude");
+    }
+
+    #[test]
+    fn sanitize_unicode_preserved() {
+        assert_eq!(sanitize_session_name("café"), "café");
+    }
 }
