@@ -22,7 +22,7 @@ pub fn switch_to_pane(target: &str) {
 /// and passes the parts as the binary + args to tmux (no shell wrapper, so aliases
 /// won't resolve — use full paths).
 /// Returns the session name on success.
-pub fn create_session(name: &str, cwd: &str, command: Option<&str>) -> Result<String, String> {
+pub fn create_session(name: &str, cwd: &str, command: Option<&str>, tags: &[String]) -> Result<String, String> {
     if !session::validate_cwd(cwd) {
         return Err(format!("Invalid working directory: {cwd}"));
     }
@@ -38,6 +38,12 @@ pub fn create_session(name: &str, cwd: &str, command: Option<&str>) -> Result<St
         "-c".to_string(),
         cwd.to_string(),
     ];
+
+    if !tags.is_empty() {
+        let tags_val = tags.join(",");
+        tmux_args.push("-e".to_string());
+        tmux_args.push(format!("RECON_TAGS={tags_val}"));
+    }
 
     match command {
         Some(cmd) => {

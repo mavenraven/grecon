@@ -34,11 +34,11 @@ fn main() -> io::Result<()> {
                 tmux::switch_to_pane(&name);
             }
         }
-        Some(Command::Launch { name, cwd, command, attach }) => {
+        Some(Command::Launch { name, cwd, command, attach, tag }) => {
             let (default_name, default_cwd) = tmux::default_new_session_info();
             let session_name = name.as_deref().unwrap_or(&default_name);
             let session_cwd = cwd.as_deref().unwrap_or(&default_cwd);
-            match tmux::create_session(session_name, session_cwd, command.as_deref()) {
+            match tmux::create_session(session_name, session_cwd, command.as_deref(), &tag) {
                 Ok(name) => {
                     if attach {
                         tmux::switch_to_pane(&name);
@@ -90,10 +90,10 @@ fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Command::Json) => {
+        Some(Command::Json { tag }) => {
             let mut app = App::new();
             app.refresh();
-            println!("{}", app.to_json());
+            println!("{}", app.to_json(&tag));
         }
         Some(Command::Park) => {
             park::park();

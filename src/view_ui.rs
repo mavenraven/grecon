@@ -692,6 +692,7 @@ mod tests {
             started_at: 0,
             jsonl_path: PathBuf::new(),
             last_file_size: 0,
+            tags: std::collections::HashMap::new(),
         }
     }
 

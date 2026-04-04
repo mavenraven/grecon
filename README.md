@@ -104,6 +104,8 @@ recon json                                   # JSON output (for scripting)
 recon launch                                 # Create a new claude session (background)
 recon launch --name foo --cwd ~/repos/myapp  # Custom name and directory
 recon launch --command "claude --model sonnet" --attach  # Custom command, attach to session
+recon launch --tag env:staging --tag role:reviewer       # Tag a session (key:value metadata)
+recon json --tag role:reviewer               # Filter JSON output by tag (must match all)
 recon new                                    # Interactive new session form
 recon resume                                 # Interactive resume picker
 recon resume --id <session-id>               # Resume a specific session

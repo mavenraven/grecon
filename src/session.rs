@@ -107,6 +107,7 @@ pub struct Session {
     pub started_at: u64,
     pub jsonl_path: PathBuf,
     pub last_file_size: u64,
+    pub tags: HashMap<String, String>,
 }
 
 impl Session {
@@ -278,6 +279,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
 
             matched_session_ids.insert(session_id.clone());
 
+            let tags = read_tmux_tags(&live.tmux_session);
             sessions.push(Session {
                 session_id,
                 project_name,
@@ -296,6 +298,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 started_at: live.started_at,
                 jsonl_path: path,
                 last_file_size: info.file_size,
+                tags,
             });
         }
     }
@@ -371,6 +374,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 Some(&live.pane_target),
             );
 
+            let tags = read_tmux_tags(&live.tmux_session);
             sessions.push(Session {
                 session_id: session_id_key.clone(),
                 project_name,
@@ -389,10 +393,12 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 started_at: live.started_at,
                 jsonl_path: path,
                 last_file_size: info.file_size,
+                tags,
             });
         } else {
             // No JSONL found — brand-new session, show as New placeholder
             let (project_name, relative_dir, branch) = git_project_info(&live.pane_cwd);
+            let tags = read_tmux_tags(&live.tmux_session);
             sessions.push(Session {
                 session_id: session_id_key.clone(),
                 project_name,
@@ -411,6 +417,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 started_at: live.started_at,
                 jsonl_path: PathBuf::new(),
                 last_file_size: 0,
+                tags,
             });
         }
     }
@@ -874,6 +881,17 @@ fn read_tmux_env(session_name: &str, var: &str) -> Option<String> {
     // Output format: "VAR=value\n"
     let line = String::from_utf8_lossy(&output.stdout);
     line.trim().split_once('=').map(|(_, v)| v.to_string())
+}
+
+/// Read RECON_TAGS from a tmux session's environment and parse into key:value pairs.
+fn read_tmux_tags(session_name: &str) -> HashMap<String, String> {
+    read_tmux_env(session_name, "RECON_TAGS")
+        .map(|val| {
+            val.split(',')
+                .filter_map(|tag| tag.split_once(':').map(|(k, v)| (k.to_string(), v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Parse `--resume <session-id>` from the process command line via ps.

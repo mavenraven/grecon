@@ -82,7 +82,7 @@ impl NewSessionForm {
                         c
                     }
                 };
-                match tmux::create_session(self.name.trim(), &cwd, None) {
+                match tmux::create_session(self.name.trim(), &cwd, None, &[]) {
                     Ok(name) => self.result = Some(name),
                     Err(_) => self.result = Some(String::new()),
                 }

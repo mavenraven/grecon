@@ -219,7 +219,7 @@ impl App {
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "claude".to_string());
-                        if let Ok(name) = tmux::create_session(&default_name, &cwd, None) {
+                        if let Ok(name) = tmux::create_session(&default_name, &cwd, None, &[]) {
                             tmux::switch_to_pane(&name);
                             self.should_quit = true;
                         }
@@ -403,11 +403,22 @@ impl App {
         self.selected_zoomed_session().map(|s| s.cwd.clone())
     }
 
-    pub fn to_json(&self) -> String {
+    pub fn to_json(&self, tag_filters: &[String]) -> String {
+        // Parse tag filters into key:value pairs
+        let filters: Vec<(&str, &str)> = tag_filters
+            .iter()
+            .filter_map(|t| t.split_once(':'))
+            .collect();
+
         let sessions: Vec<serde_json::Value> = self
             .sessions
             .iter()
             .enumerate()
+            .filter(|(_, s)| {
+                filters.iter().all(|(k, v)| {
+                    s.tags.get(*k).map_or(false, |tv| tv == v)
+                })
+            })
             .map(|(i, s)| {
                 serde_json::json!({
                     "index": i + 1,
@@ -429,6 +440,7 @@ impl App {
                     "pid": s.pid,
                     "last_activity": s.last_activity,
                     "started_at": s.started_at,
+                    "tags": s.tags,
                 })
             })
             .collect();

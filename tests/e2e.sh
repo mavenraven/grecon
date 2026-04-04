@@ -32,7 +32,7 @@ CLAUDE_EFFORT="${CLAUDE_EFFORT:-low}"
 CLAUDE_FLAGS="--model $CLAUDE_MODEL --effort $CLAUDE_EFFORT"
 
 # --- Test selection ---
-ALL_TESTS=(new_state working_state idle_state token_stability sort_order input_state resume_tokens resume_idempotency reset_activity working_sonnet multi_pane_status pane_target_json dual_pane_discovery)
+ALL_TESTS=(new_state working_state idle_state token_stability sort_order input_state resume_tokens resume_idempotency reset_activity working_sonnet multi_pane_status pane_target_json dual_pane_discovery tags_launch tags_filter tags_multi_filter)
 RUN_TESTS=("$@")
 
 should_run() {
@@ -64,7 +64,7 @@ cleanup() {
     tmux list-sessions -F '#{session_name}' 2>/dev/null \
         | grep "^e2e-${RID}-" \
         | while read -r s; do tmux kill-session -t "$s" 2>/dev/null || true; done
-    rm -rf "$TMPDIR_NEW" "$TMPDIR_INPUT" "$TMPDIR_RESUME" "$TMPDIR_RESET" "$TMPDIR_WORKING" "$TMPDIR_MULTI" "$TMPDIR_DUAL_A" "$TMPDIR_DUAL_B" "$TMPFILE"
+    rm -rf "$TMPDIR_NEW" "$TMPDIR_INPUT" "$TMPDIR_RESUME" "$TMPDIR_RESET" "$TMPDIR_WORKING" "$TMPDIR_MULTI" "$TMPDIR_DUAL_A" "$TMPDIR_DUAL_B" "$TMPFILE" "/tmp/recon-e2e-${RID}-tag"
 }
 trap cleanup EXIT
 
@@ -522,6 +522,68 @@ if should_run "dual_pane_discovery"; then
             report fail "Dual-pane discovery: resumed session not detected (dedup on tmux_session blocks it)"
         fi
     fi
+fi
+
+# --- Test 14: Tags appear in JSON output ---
+if should_run "tags_launch"; then
+    S_TAG="e2e-${RID}-tag"
+    TMPDIR_TAG="/tmp/recon-e2e-${RID}-tag"
+    mkdir -p "$TMPDIR_TAG"
+    "$RECON" launch --name "$S_TAG" --cwd "$TMPDIR_TAG" --command "$(which claude) $CLAUDE_FLAGS" --tag env:test --tag role:worker 2>/dev/null
+    wait_for_state "$S_TAG" "New" 15 >/dev/null 2>&1 || true
+
+    TAGS=$("$RECON" json 2>/dev/null | jq -r \
+        --arg name "$S_TAG" \
+        '.sessions[] | select(.tmux_session == $name) | .tags')
+
+    if echo "$TAGS" | jq -e '.env == "test" and .role == "worker"' &>/dev/null; then
+        report pass "Tags: launched session has correct tags ($TAGS)"
+    else
+        report fail "Tags: expected env:test + role:worker but got $TAGS"
+    fi
+fi
+
+# --- Test 15: Tag filter returns only matching sessions ---
+if should_run "tags_filter"; then
+    S_TAG="e2e-${RID}-tag"  # reuse from test 14 (or create if skipped)
+    TMPDIR_TAG="/tmp/recon-e2e-${RID}-tag"
+    if ! tmux has-session -t "$S_TAG" 2>/dev/null; then
+        mkdir -p "$TMPDIR_TAG"
+        "$RECON" launch --name "$S_TAG" --cwd "$TMPDIR_TAG" --command "$(which claude) $CLAUDE_FLAGS" --tag env:test --tag role:worker 2>/dev/null
+        wait_for_state "$S_TAG" "New" 15 >/dev/null 2>&1 || true
+    fi
+
+    MATCH=$("$RECON" json --tag role:worker 2>/dev/null | jq '[.sessions[]] | length')
+    NO_MATCH=$("$RECON" json --tag role:nonexistent 2>/dev/null | jq '[.sessions[]] | length')
+
+    if [[ "$MATCH" -ge 1 && "$NO_MATCH" -eq 0 ]]; then
+        report pass "Tags filter: --tag role:worker matched $MATCH, --tag role:nonexistent matched 0"
+    else
+        report fail "Tags filter: expected match>=1 got $MATCH, expected nomatch=0 got $NO_MATCH"
+    fi
+fi
+
+# --- Test 16: Multiple tag filters require all to match ---
+if should_run "tags_multi_filter"; then
+    S_TAG="e2e-${RID}-tag"  # reuse from test 14
+    TMPDIR_TAG="/tmp/recon-e2e-${RID}-tag"
+    if ! tmux has-session -t "$S_TAG" 2>/dev/null; then
+        mkdir -p "$TMPDIR_TAG"
+        "$RECON" launch --name "$S_TAG" --cwd "$TMPDIR_TAG" --command "$(which claude) $CLAUDE_FLAGS" --tag env:test --tag role:worker 2>/dev/null
+        wait_for_state "$S_TAG" "New" 15 >/dev/null 2>&1 || true
+    fi
+
+    BOTH=$("$RECON" json --tag env:test --tag role:worker 2>/dev/null | jq '[.sessions[]] | length')
+    PARTIAL=$("$RECON" json --tag env:test --tag role:manager 2>/dev/null | jq '[.sessions[]] | length')
+
+    if [[ "$BOTH" -ge 1 && "$PARTIAL" -eq 0 ]]; then
+        report pass "Tags multi-filter: both match=$BOTH, partial match=$PARTIAL (AND logic)"
+    else
+        report fail "Tags multi-filter: expected both>=1 got $BOTH, expected partial=0 got $PARTIAL"
+    fi
+
+    # Clean up tag test session
+    tmux kill-session -t "$S_TAG" 2>/dev/null || true
 fi
 
 # --- Summary ---

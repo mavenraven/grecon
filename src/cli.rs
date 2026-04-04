@@ -28,6 +28,9 @@ pub enum Command {
         /// Attach to the session after creating it
         #[arg(long)]
         attach: bool,
+        /// Tag the session (key:value, repeatable)
+        #[arg(long)]
+        tag: Vec<String>,
     },
     /// Jump directly to the next agent waiting for input
     Next,
@@ -44,7 +47,11 @@ pub enum Command {
         no_attach: bool,
     },
     /// Print all session state as JSON
-    Json,
+    Json {
+        /// Filter sessions by tag (key:value, repeatable, must match all)
+        #[arg(long)]
+        tag: Vec<String>,
+    },
     /// Save all live sessions to disk for restoring later
     Park,
     /// Restore previously parked sessions
