@@ -128,7 +128,9 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 Cell::from(activity),
             ]);
 
-            if session.status == SessionStatus::Input {
+            if session.status == SessionStatus::Input && display_idx == app.selected {
+                row.style(Style::default().bg(Color::Rgb(80, 65, 0)))
+            } else if session.status == SessionStatus::Input {
                 row.style(Style::default().bg(Color::Rgb(50, 40, 0)))
             } else if display_idx == app.selected {
                 row.style(Style::default().bg(Color::DarkGray))
