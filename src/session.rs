@@ -1233,14 +1233,38 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String, String)> {
 /// that has a corresponding ~/.claude/sessions/{PID}.json file.
 fn find_claude_child_pid(parent_pid: i32) -> Option<i32> {
     let sessions_dir = dirs::home_dir()?.join(".claude").join("sessions");
-    let output = std::process::Command::new("pgrep")
-        .args(["-P", &parent_pid.to_string()])
+
+    // Build a parent→children map from `ps` (more reliable than `pgrep -P`
+    // which can return garbage on macOS under certain sandbox/ulimit configs).
+    let output = std::process::Command::new("ps")
+        .args(["-eo", "pid,ppid"])
         .output()
         .ok()?;
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|l| l.trim().parse::<i32>().ok())
-        .find(|pid| sessions_dir.join(format!("{pid}.json")).exists())
+    let mut children_map: HashMap<i32, Vec<i32>> = HashMap::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines().skip(1) {
+        let mut parts = line.split_whitespace();
+        if let (Some(pid_s), Some(ppid_s)) = (parts.next(), parts.next()) {
+            if let (Ok(pid), Ok(ppid)) = (pid_s.parse::<i32>(), ppid_s.parse::<i32>()) {
+                children_map.entry(ppid).or_default().push(pid);
+            }
+        }
+    }
+
+    // BFS from parent_pid to find a descendant with a session file (handles
+    // wrappers like ~/bin/claude that add an extra bash layer).
+    let mut queue = std::collections::VecDeque::new();
+    queue.push_back(parent_pid);
+    while let Some(pid) = queue.pop_front() {
+        if let Some(kids) = children_map.get(&pid) {
+            for &child in kids {
+                if sessions_dir.join(format!("{child}.json")).exists() {
+                    return Some(child);
+                }
+                queue.push_back(child);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
