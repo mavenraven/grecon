@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::{
@@ -29,6 +30,7 @@ pub struct ResumeEntry {
     pub model: Option<String>,
     pub tokens: u64,
     pub last_active: String, // RFC3339
+    pub project_dir: PathBuf,
 }
 
 /// Build list of resumable sessions by scanning JSONL files and filtering out live ones.
@@ -96,6 +98,7 @@ fn find_resumable_sessions() -> Vec<ResumeEntry> {
                 model: summary.model,
                 tokens: summary.tokens,
                 last_active: format_epoch_ms(mtime_ms),
+                project_dir: dir_entry.path(),
             });
         }
     }
@@ -111,7 +114,7 @@ fn get_live_session_ids() -> HashSet<String> {
 
 /// Interactive TUI picker for resuming a past session.
 pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
-    let entries = find_resumable_sessions();
+    let mut entries = find_resumable_sessions();
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -120,6 +123,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut selected = 0usize;
+    let mut confirm_delete = false;
     let result;
 
     loop {
@@ -218,45 +222,79 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                 f.render_widget(table, chunks[0]);
             }
 
-            let footer = Paragraph::new(Line::from(vec![
-                Span::styled("j/k", Style::default().fg(Color::Cyan)),
-                Span::raw(" navigate  "),
-                Span::styled("Enter", Style::default().fg(Color::Cyan)),
-                Span::raw(" resume  "),
-                Span::styled("q/Esc", Style::default().fg(Color::Cyan)),
-                Span::raw(" cancel"),
-            ]));
+            let footer = if confirm_delete {
+                Paragraph::new(Line::from(vec![
+                    Span::styled(" Delete session? ", Style::default().fg(Color::Red)),
+                    Span::styled("y", Style::default().fg(Color::Cyan)),
+                    Span::raw(" yes  "),
+                    Span::styled("n/Esc", Style::default().fg(Color::Cyan)),
+                    Span::raw(" no"),
+                ]))
+            } else {
+                Paragraph::new(Line::from(vec![
+                    Span::styled("j/k", Style::default().fg(Color::Cyan)),
+                    Span::raw(" navigate  "),
+                    Span::styled("Enter", Style::default().fg(Color::Cyan)),
+                    Span::raw(" resume  "),
+                    Span::styled("x", Style::default().fg(Color::Cyan)),
+                    Span::raw(" delete  "),
+                    Span::styled("q/Esc", Style::default().fg(Color::Cyan)),
+                    Span::raw(" cancel"),
+                ]))
+            };
             f.render_widget(footer, chunks[1]);
         })?;
 
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        result = None;
-                        break;
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        if !entries.is_empty() && selected + 1 < entries.len() {
-                            selected += 1;
-                        }
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        if selected > 0 {
-                            selected -= 1;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        if entries.is_empty() {
-                            result = None;
-                        } else {
+                if confirm_delete {
+                    match key.code {
+                        KeyCode::Char('y') => {
                             let entry = &entries[selected];
-                            let name = dir_name(&entry.cwd);
-                            result = Some((entry.session_id.clone(), name));
+                            delete_session(&entry.session_id, &entry.project_dir);
+                            entries.remove(selected);
+                            if selected > 0 && selected >= entries.len() {
+                                selected = entries.len() - 1;
+                            }
+                            confirm_delete = false;
                         }
-                        break;
+                        _ => {
+                            confirm_delete = false;
+                        }
                     }
-                    _ => {}
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            result = None;
+                            break;
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if !entries.is_empty() && selected + 1 < entries.len() {
+                                selected += 1;
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if selected > 0 {
+                                selected -= 1;
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if entries.is_empty() {
+                                result = None;
+                            } else {
+                                let entry = &entries[selected];
+                                let name = dir_name(&entry.cwd);
+                                result = Some((entry.session_id.clone(), name));
+                            }
+                            break;
+                        }
+                        KeyCode::Char('x') => {
+                            if !entries.is_empty() {
+                                confirm_delete = true;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -398,6 +436,20 @@ fn dir_name(path: &str) -> String {
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+fn delete_session(session_id: &str, project_dir: &std::path::Path) {
+    let _ = fs::remove_file(project_dir.join(format!("{session_id}.jsonl")));
+    let _ = fs::remove_dir_all(project_dir.join(session_id));
+
+    if let Some(home) = dirs::home_dir() {
+        let claude = home.join(".claude");
+        for subdir in ["file-history", "tasks", "debug", "plans"] {
+            let _ = fs::remove_dir_all(claude.join(subdir).join(session_id));
+        }
+
+        let _ = fs::remove_file(home.join(".recon").join("sessions").join(session_id));
+    }
 }
 
 fn format_relative(ts: &str) -> String {
