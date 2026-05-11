@@ -14,13 +14,12 @@ use ratatui::{
     prelude::CrosstermBackend,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
     Terminal,
 };
 
 use crate::model;
 
-const MAX_ENTRIES: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct ResumeEntry {
@@ -46,11 +45,6 @@ fn find_resumable_sessions() -> Vec<ResumeEntry> {
         Ok(d) => d,
         Err(_) => return vec![],
     };
-
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
 
     let mut entries = Vec::new();
 
@@ -80,12 +74,7 @@ fn find_resumable_sessions() -> Vec<ResumeEntry> {
                 continue;
             }
 
-            // Skip old files (>7 days)
             let mtime_ms = file_mtime_ms(&path);
-            if now_ms.saturating_sub(mtime_ms) > 7 * 24 * 3600 * 1000 {
-                continue;
-            }
-
             let summary = read_jsonl_summary(&path);
             if summary.tokens == 0 {
                 continue;
@@ -104,7 +93,6 @@ fn find_resumable_sessions() -> Vec<ResumeEntry> {
     }
 
     entries.sort_by(|a, b| b.last_active.cmp(&a.last_active));
-    entries.truncate(MAX_ENTRIES);
     entries
 }
 
@@ -122,7 +110,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut selected = 0usize;
+    let mut table_state = TableState::default().with_selected(0);
     let mut confirm_delete = false;
     let result;
 
@@ -137,7 +125,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
 
             if entries.is_empty() {
                 let msg = Paragraph::new(Line::from(vec![Span::styled(
-                    "  No resumable sessions found (last 7 days)",
+                    "  No resumable sessions found",
                     Style::default().fg(Color::DarkGray),
                 )]))
                 .block(block);
@@ -201,11 +189,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                             Cell::from(exited),
                         ]);
 
-                        if i == selected {
-                            row.style(Style::default().bg(Color::DarkGray))
-                        } else {
-                            row
-                        }
+                        row
                     })
                     .collect();
 
@@ -218,8 +202,11 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                     Constraint::Min(12),               // Last Active
                 ];
 
-                let table = Table::new(rows, widths).header(header).block(block);
-                f.render_widget(table, chunks[0]);
+                let table = Table::new(rows, widths)
+                    .header(header)
+                    .block(block)
+                    .row_highlight_style(Style::default().bg(Color::DarkGray));
+                f.render_stateful_widget(table, chunks[0], &mut table_state);
             }
 
             let footer = if confirm_delete {
@@ -247,14 +234,16 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
 
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
+                let selected = table_state.selected().unwrap_or(0);
                 if confirm_delete {
                     match key.code {
                         KeyCode::Char('y') => {
-                            let entry = &entries[selected];
-                            delete_session(&entry.session_id, &entry.project_dir);
+                            delete_session(&entries[selected].session_id, &entries[selected].project_dir);
                             entries.remove(selected);
-                            if selected > 0 && selected >= entries.len() {
-                                selected = entries.len() - 1;
+                            if entries.is_empty() {
+                                table_state.select(None);
+                            } else if selected >= entries.len() {
+                                table_state.select(Some(entries.len() - 1));
                             }
                             confirm_delete = false;
                         }
@@ -270,12 +259,12 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             if !entries.is_empty() && selected + 1 < entries.len() {
-                                selected += 1;
+                                table_state.select(Some(selected + 1));
                             }
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
                             if selected > 0 {
-                                selected -= 1;
+                                table_state.select(Some(selected - 1));
                             }
                         }
                         KeyCode::Enter => {
