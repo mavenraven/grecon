@@ -279,6 +279,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
 
             matched_session_ids.insert(session_id.clone());
 
+            save_session_name(&session_id, &live.tmux_session);
             let tags = read_tmux_tags(&live.tmux_session);
             sessions.push(Session {
                 session_id,
@@ -374,6 +375,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 Some(&live.pane_target),
             );
 
+            save_session_name(session_id_key, &live.tmux_session);
             let tags = read_tmux_tags(&live.tmux_session);
             sessions.push(Session {
                 session_id: session_id_key.clone(),
@@ -397,6 +399,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             });
         } else {
             // No JSONL found — brand-new session, show as New placeholder
+            save_session_name(session_id_key, &live.tmux_session);
             let (project_name, relative_dir, branch) = git_project_info(&live.pane_cwd);
             let tags = read_tmux_tags(&live.tmux_session);
             sessions.push(Session {
@@ -1265,6 +1268,31 @@ fn find_claude_child_pid(parent_pid: i32) -> Option<i32> {
         }
     }
     None
+}
+
+fn recon_sessions_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|h| h.join(".recon").join("sessions"))
+}
+
+pub fn save_session_name(session_id: &str, tmux_name: &str) {
+    if session_id.starts_with("tmux-") {
+        return;
+    }
+    let dir = match recon_sessions_dir() {
+        Some(d) => d,
+        None => return,
+    };
+    let path = dir.join(session_id);
+    if path.exists() {
+        return;
+    }
+    let _ = fs::create_dir_all(&dir);
+    let _ = fs::write(path, tmux_name);
+}
+
+pub fn load_session_name(session_id: &str) -> Option<String> {
+    let path = recon_sessions_dir()?.join(session_id);
+    fs::read_to_string(path).ok().filter(|s| !s.is_empty())
 }
 
 #[cfg(test)]

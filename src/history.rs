@@ -141,7 +141,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
             } else {
                 let header = Row::new(vec![
                     Cell::from(" # "),
-                    Cell::from("Session ID"),
+                    Cell::from("Session"),
                     Cell::from("Git(Project::Branch)"),
                     Cell::from("Model"),
                     Cell::from("Context"),
@@ -162,7 +162,9 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                     .iter()
                     .enumerate()
                     .map(|(i, e)| {
-                        let short_id = &e.session_id[..8.min(e.session_id.len())];
+                        let name = crate::session::load_session_name(&e.session_id);
+                        let display_name = name.as_deref()
+                            .unwrap_or(&e.session_id[..8.min(e.session_id.len())]);
 
                         let project = dir_name(&e.cwd);
                         let project_cell = match &e.branch {
@@ -188,7 +190,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
 
                         let row = Row::new(vec![
                             Cell::from(format!(" {} ", i + 1)),
-                            Cell::from(short_id.to_string()),
+                            Cell::from(display_name.to_string()),
                             project_cell,
                             Cell::from(model_display),
                             Cell::from(tokens),
@@ -205,7 +207,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
 
                 let widths = [
                     Constraint::Length(4),              // #
-                    Constraint::Length(12),             // Session ID
+                    Constraint::Length(20),             // Name
                     Constraint::Length(git_col_width),  // Git(Project::Branch)
                     Constraint::Length(14),             // Model
                     Constraint::Length(14),             // Context
