@@ -31,16 +31,13 @@ jobs:
             -output recon-macos
           chmod +x recon-macos
 
-      - name: Get version
-        id: version
-        run: echo "version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*\"\(.*\)\"/\1/')" >> "$GITHUB_OUTPUT"
-
       - name: Publish release
         run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
           gh release delete latest --cleanup-tag --yes 2>/dev/null || true
           gh release create latest recon-macos \
-            --title "recon v${{ steps.version.outputs.version }}" \
-            --notes "Built from \`${GITHUB_SHA::7}\` on $(date -u +%Y-%m-%d)" \
+            --title "recon ${SHORT_SHA}" \
+            --notes "Built from \`${SHORT_SHA}\` on $(date -u +%Y-%m-%d)" \
             --latest
         env:
           GH_TOKEN: ${{ github.token }}
