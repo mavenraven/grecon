@@ -238,7 +238,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                 if confirm_delete {
                     match key.code {
                         KeyCode::Char('y') => {
-                            delete_session(&entries[selected].session_id, &entries[selected].project_dir);
+                            delete_session(&entries[selected].session_id, &entries[selected].project_dir, &entries[selected].cwd);
                             entries.remove(selected);
                             if entries.is_empty() {
                                 table_state.select(None);
@@ -427,7 +427,7 @@ fn dir_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn delete_session(session_id: &str, project_dir: &std::path::Path) {
+fn delete_session(session_id: &str, project_dir: &std::path::Path, cwd: &str) {
     let _ = fs::remove_file(project_dir.join(format!("{session_id}.jsonl")));
     let _ = fs::remove_dir_all(project_dir.join(session_id));
 
@@ -438,6 +438,17 @@ fn delete_session(session_id: &str, project_dir: &std::path::Path) {
         }
 
         let _ = fs::remove_file(home.join(".recon").join("sessions").join(session_id));
+    }
+
+    if let Some(wt_idx) = cwd.find("/.claude/worktrees/") {
+        let repo_root = &cwd[..wt_idx];
+        let wt_path = cwd;
+        let _ = std::process::Command::new("git")
+            .args(["-C", repo_root, "worktree", "remove", "--force", wt_path])
+            .output();
+        let _ = std::process::Command::new("git")
+            .args(["-C", repo_root, "worktree", "prune"])
+            .output();
     }
 }
 
