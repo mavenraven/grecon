@@ -34,10 +34,9 @@ jobs:
       - name: Publish release
         run: |
           SHORT_SHA="${GITHUB_SHA::7}"
-          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
-          gh release create latest recon-macos \
+          gh release create "${SHORT_SHA}" recon-macos \
             --title "recon ${SHORT_SHA}" \
-            --notes "Built from \`${SHORT_SHA}\` on $(date -u +%Y-%m-%d)" \
+            --notes "Built from \`${GITHUB_SHA}\` on $(date -u +%Y-%m-%d)" \
             --latest
         env:
           GH_TOKEN: ${{ github.token }}
