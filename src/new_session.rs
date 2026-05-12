@@ -14,11 +14,13 @@ use crate::tmux;
 enum Field {
     Name,
     Cwd,
+    Worktree,
 }
 
 pub struct NewSessionForm {
     name: String,
     cwd: String,
+    worktree: bool,
     cursor_pos: usize,
     active: Field,
     pub result: Option<String>,
@@ -31,6 +33,7 @@ impl NewSessionForm {
         NewSessionForm {
             name,
             cwd,
+            worktree: false,
             cursor_pos,
             active: Field::Name,
             result: None,
@@ -41,6 +44,7 @@ impl NewSessionForm {
         match self.active {
             Field::Name => &self.name,
             Field::Cwd => &self.cwd,
+            Field::Worktree => &self.name, // unused for toggle
         }
     }
 
@@ -48,10 +52,53 @@ impl NewSessionForm {
         match self.active {
             Field::Name => &mut self.name,
             Field::Cwd => &mut self.cwd,
+            Field::Worktree => &mut self.name, // unused for toggle
+        }
+    }
+
+    fn submit(&mut self) {
+        if self.name.trim().is_empty() {
+            return;
+        }
+        let cwd = if self.cwd.trim().is_empty() {
+            ".".to_string()
+        } else {
+            let c = self.cwd.trim().to_string();
+            if let Some(rest) = c.strip_prefix('~') {
+                if let Some(home) = dirs::home_dir() {
+                    format!("{}{rest}", home.display())
+                } else {
+                    c
+                }
+            } else {
+                c
+            }
+        };
+        match tmux::create_session(self.name.trim(), &cwd, None, &[], self.worktree) {
+            Ok(name) => self.result = Some(name),
+            Err(_) => self.result = Some(String::new()),
         }
     }
 
     pub fn handle_key(&mut self, event: event::KeyEvent) {
+        if matches!(self.active, Field::Worktree) {
+            match event.code {
+                KeyCode::Esc => self.result = Some(String::new()),
+                KeyCode::Char(' ') => self.worktree = !self.worktree,
+                KeyCode::Enter => self.submit(),
+                KeyCode::Tab | KeyCode::Down => {
+                    self.active = Field::Name;
+                    self.cursor_pos = self.name.len();
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    self.active = Field::Cwd;
+                    self.cursor_pos = self.cwd.len();
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match event.code {
             KeyCode::Esc => {
                 self.result = Some(String::new());
@@ -65,27 +112,7 @@ impl NewSessionForm {
                     self.cursor_pos = self.cwd.len();
                     return;
                 }
-                if self.name.trim().is_empty() {
-                    return;
-                }
-                let cwd = if self.cwd.trim().is_empty() {
-                    ".".to_string()
-                } else {
-                    let c = self.cwd.trim().to_string();
-                    if let Some(rest) = c.strip_prefix('~') {
-                        if let Some(home) = dirs::home_dir() {
-                            format!("{}{rest}", home.display())
-                        } else {
-                            c
-                        }
-                    } else {
-                        c
-                    }
-                };
-                match tmux::create_session(self.name.trim(), &cwd, None, &[]) {
-                    Ok(name) => self.result = Some(name),
-                    Err(_) => self.result = Some(String::new()),
-                }
+                self.submit();
             }
             KeyCode::Tab | KeyCode::Down => {
                 match self.active {
@@ -94,21 +121,21 @@ impl NewSessionForm {
                         self.cursor_pos = self.cwd.len();
                     }
                     Field::Cwd => {
-                        self.active = Field::Name;
-                        self.cursor_pos = self.name.len();
+                        self.active = Field::Worktree;
                     }
+                    Field::Worktree => unreachable!(),
                 }
             }
             KeyCode::BackTab | KeyCode::Up => {
                 match self.active {
                     Field::Name => {
-                        self.active = Field::Cwd;
-                        self.cursor_pos = self.cwd.len();
+                        self.active = Field::Worktree;
                     }
                     Field::Cwd => {
                         self.active = Field::Name;
                         self.cursor_pos = self.name.len();
                     }
+                    Field::Worktree => unreachable!(),
                 }
             }
             KeyCode::Backspace => {
@@ -191,6 +218,7 @@ impl NewSessionForm {
         let rows = Layout::vertical([
             Constraint::Length(3), // Name box
             Constraint::Length(3), // Dir box
+            Constraint::Length(1), // Worktree toggle
             Constraint::Length(1), // Hints
             Constraint::Min(0),
         ])
@@ -210,6 +238,20 @@ impl NewSessionForm {
             cwd_inner,
         );
 
+        // Worktree toggle
+        let wt_marker = if self.worktree { "x" } else { " " };
+        let wt_active = matches!(self.active, Field::Worktree);
+        let wt_style = if wt_active {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let wt_line = Line::from(vec![
+            Span::styled(format!(" [{wt_marker}]"), wt_style),
+            Span::styled(" Worktree", wt_style),
+        ]);
+        frame.render_widget(Paragraph::new(wt_line), rows[2]);
+
         // Hints
         let hint = match self.active {
             Field::Name => Line::from(vec![
@@ -228,13 +270,24 @@ impl NewSessionForm {
                 Span::styled("Esc", Style::default().fg(Color::Cyan)),
                 Span::raw(" cancel"),
             ]),
+            Field::Worktree => Line::from(vec![
+                Span::styled(" Space", Style::default().fg(Color::Cyan)),
+                Span::raw(" toggle  "),
+                Span::styled("Enter", Style::default().fg(Color::Cyan)),
+                Span::raw(" create  "),
+                Span::styled("Tab", Style::default().fg(Color::Cyan)),
+                Span::raw(" switch  "),
+                Span::styled("Esc", Style::default().fg(Color::Cyan)),
+                Span::raw(" cancel"),
+            ]),
         };
-        frame.render_widget(Paragraph::new(hint), rows[2]);
+        frame.render_widget(Paragraph::new(hint), rows[3]);
 
         // Cursor
         let (cx, cy) = match self.active {
             Field::Name => (name_inner.x + self.cursor_pos as u16, name_inner.y),
             Field::Cwd => (cwd_inner.x + self.cursor_pos as u16, cwd_inner.y),
+            Field::Worktree => (rows[2].x + 2, rows[2].y),
         };
         frame.set_cursor_position((cx, cy));
     }

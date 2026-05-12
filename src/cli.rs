@@ -31,6 +31,9 @@ pub enum Command {
         /// Tag the session (key:value, repeatable)
         #[arg(long)]
         tag: Vec<String>,
+        /// Create a git worktree for this session
+        #[arg(long)]
+        worktree: bool,
     },
     /// Jump directly to the next agent waiting for input
     Next,

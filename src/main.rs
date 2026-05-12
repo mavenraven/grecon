@@ -34,11 +34,11 @@ fn main() -> io::Result<()> {
                 tmux::switch_to_pane(&name);
             }
         }
-        Some(Command::Launch { name, cwd, command, attach, tag }) => {
+        Some(Command::Launch { name, cwd, command, attach, tag, worktree }) => {
             let (default_name, default_cwd) = tmux::default_new_session_info();
             let session_name = name.as_deref().unwrap_or(&default_name);
             let session_cwd = cwd.as_deref().unwrap_or(&default_cwd);
-            match tmux::create_session(session_name, session_cwd, command.as_deref(), &tag) {
+            match tmux::create_session(session_name, session_cwd, command.as_deref(), &tag, worktree) {
                 Ok(name) => {
                     if attach {
                         tmux::switch_to_pane(&name);
