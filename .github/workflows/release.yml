@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build (arm64)
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build (x86_64)
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/aarch64-apple-darwin/release/recon \
+            target/x86_64-apple-darwin/release/recon \
+            -output recon-macos
+          chmod +x recon-macos
+
+      - name: Get version
+        id: version
+        run: echo "version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*\"\(.*\)\"/\1/')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        run: |
+          gh release delete latest --cleanup-tag --yes 2>/dev/null || true
+          gh release create latest recon-macos \
+            --title "recon v${{ steps.version.outputs.version }}" \
+            --notes "Built from \`${GITHUB_SHA::7}\` on $(date -u +%Y-%m-%d)" \
+            --latest
+        env:
+          GH_TOKEN: ${{ github.token }}
