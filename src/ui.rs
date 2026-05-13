@@ -117,9 +117,21 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
             let dir_cell =
                 Cell::from(cwd_display).style(Style::default().fg(Color::DarkGray));
 
+            let name_cell = if session.subagent_count > 0 {
+                Cell::from(Line::from(vec![
+                    Span::raw(tmux_name),
+                    Span::styled(
+                        format!(" [{}]", session.subagent_count),
+                        Style::default().fg(Color::Cyan),
+                    ),
+                ]))
+            } else {
+                Cell::from(tmux_name.to_string())
+            };
+
             let row = Row::new(vec![
                 Cell::from(num),
-                Cell::from(tmux_name.to_string()),
+                name_cell,
                 project_cell,
                 dir_cell,
                 status_cell,

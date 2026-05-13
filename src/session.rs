@@ -108,6 +108,7 @@ pub struct Session {
     pub jsonl_path: PathBuf,
     pub last_file_size: u64,
     pub tags: HashMap<String, String>,
+    pub subagent_count: usize,
 }
 
 impl Session {
@@ -118,23 +119,29 @@ impl Session {
         }
     }
 
-    pub fn token_display(&self) -> String {
-        let used = self.total_input_tokens + self.total_output_tokens;
-        let window = self
+    fn effective_window(&self) -> u64 {
+        let nominal = self
             .model
             .as_deref()
             .map(model::context_window)
             .unwrap_or(200_000);
+        let used = self.total_input_tokens + self.total_output_tokens;
+        if used > nominal && nominal < 1_000_000 {
+            1_000_000
+        } else {
+            nominal
+        }
+    }
+
+    pub fn token_display(&self) -> String {
+        let used = self.total_input_tokens + self.total_output_tokens;
+        let window = self.effective_window();
         format!("{}k / {}", used / 1000, format_window(window))
     }
 
     pub fn token_ratio(&self) -> f64 {
         let used = self.total_input_tokens + self.total_output_tokens;
-        let window = self
-            .model
-            .as_deref()
-            .map(model::context_window)
-            .unwrap_or(200_000);
+        let window = self.effective_window();
         if window == 0 {
             return 0.0;
         }
@@ -274,18 +281,20 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 .unwrap_or_else(|| decode_project_path(&project_dir));
             let (project_name, relative_dir, branch) = git_project_info(&cwd);
 
-            let status = determine_status(
+            let raw_status = determine_status(
                 &path,
                 info.input_tokens,
                 info.output_tokens,
                 Some(&live.pane_target),
                 &pane_contents,
             );
+            let status = debounce_status(&session_id, raw_status);
 
             matched_session_ids.insert(session_id.clone());
 
             save_session_name(&session_id, &live.tmux_session);
             let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
+            let subagent_count = count_subagents(&path);
             sessions.push(Session {
                 session_id,
                 project_name,
@@ -305,6 +314,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 jsonl_path: path,
                 last_file_size: info.file_size,
                 tags,
+                subagent_count,
             });
         }
     }
@@ -373,16 +383,18 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             let cwd = info.cwd.clone().unwrap_or_else(|| live.pane_cwd.clone());
             let (project_name, relative_dir, branch) = git_project_info(&cwd);
 
-            let status = determine_status(
+            let raw_status = determine_status(
                 &path,
                 info.input_tokens,
                 info.output_tokens,
                 Some(&live.pane_target),
                 &pane_contents,
             );
+            let status = debounce_status(session_id_key, raw_status);
 
             save_session_name(session_id_key, &live.tmux_session);
             let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
+            let subagent_count = count_subagents(&path);
             sessions.push(Session {
                 session_id: session_id_key.clone(),
                 project_name,
@@ -402,6 +414,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 jsonl_path: path,
                 last_file_size: info.file_size,
                 tags,
+                subagent_count,
             });
         } else {
             // No JSONL found — brand-new session, show as New placeholder
@@ -427,6 +440,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 jsonl_path: PathBuf::new(),
                 last_file_size: 0,
                 tags,
+                subagent_count: 0,
             });
         }
     }
@@ -511,6 +525,40 @@ struct ParsedInfo {
 
 use std::sync::Mutex;
 use std::time::Instant;
+
+struct StatusHold {
+    status: SessionStatus,
+    since: Instant,
+}
+
+static STATUS_DEBOUNCE: Mutex<Option<HashMap<String, StatusHold>>> = Mutex::new(None);
+
+const STATUS_HOLD_SECS: u64 = 3;
+
+/// Apply debounce: if a session was Working and now reads Idle,
+/// keep it as Working for STATUS_HOLD_SECS to avoid flicker.
+fn debounce_status(session_id: &str, raw: SessionStatus) -> SessionStatus {
+    let mut lock = STATUS_DEBOUNCE.lock().unwrap();
+    let map = lock.get_or_insert_with(HashMap::new);
+
+    let now = Instant::now();
+    let result = if let Some(prev) = map.get(session_id) {
+        if prev.status == SessionStatus::Working && raw == SessionStatus::Idle {
+            if prev.since.elapsed().as_secs() < STATUS_HOLD_SECS {
+                SessionStatus::Working
+            } else {
+                raw
+            }
+        } else {
+            raw.clone()
+        }
+    } else {
+        raw.clone()
+    };
+
+    map.insert(session_id.to_string(), StatusHold { status: result.clone(), since: now });
+    result
+}
 
 struct GitInfo {
     repo_name: String,
@@ -1316,6 +1364,34 @@ fn find_claude_child_pid(parent_pid: i32, sessions_dir: &Path, children_map: &Ha
         }
     }
     None
+}
+
+/// Count active subagent JSONL files for a session.
+/// Subagents live in `<project_dir>/<session_id>/`.
+fn count_subagents(jsonl_path: &Path) -> usize {
+    let session_id = match jsonl_path.file_stem() {
+        Some(s) => s,
+        None => return 0,
+    };
+    let subagent_dir = match jsonl_path.parent() {
+        Some(p) => p.join(session_id),
+        None => return 0,
+    };
+    fs::read_dir(&subagent_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let p = e.path();
+            p.extension().map(|ext| ext == "jsonl").unwrap_or(false)
+                && p.metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.elapsed().ok())
+                    .map(|d| d < Duration::from_secs(300))
+                    .unwrap_or(false)
+        })
+        .count()
 }
 
 fn recon_sessions_dir() -> Option<PathBuf> {

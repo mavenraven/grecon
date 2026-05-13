@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -18,13 +21,13 @@ pub struct App {
     pub view_mode: ViewMode,
     pub tick: u64,
     pub view_page: usize,
-    pub view_zoomed_room: Option<String>, // room name when zoomed in
-    pub view_zoom_index: Option<usize>,  // pending zoom request from key press
-    pub view_selected_agent: usize,      // selected agent within zoomed room
-    pub filter_active: bool,              // search input has focus
-    pub filter_text: String,              // current search query
-    pub filter_cursor: usize,             // cursor position in query
-    prev_sessions: HashMap<String, Session>,
+    pub view_zoomed_room: Option<String>,
+    pub view_zoom_index: Option<usize>,
+    pub view_selected_agent: usize,
+    pub filter_active: bool,
+    pub filter_text: String,
+    pub filter_cursor: usize,
+    receiver: Option<mpsc::Receiver<Vec<Session>>>,
 }
 
 impl App {
@@ -42,19 +45,61 @@ impl App {
             filter_active: false,
             filter_text: String::new(),
             filter_cursor: 0,
-            prev_sessions: HashMap::new(),
+            receiver: None,
         }
     }
 
+    /// Start the background refresh thread. Returns immediately.
+    pub fn start_background_refresh(&mut self) {
+        let (tx, rx) = mpsc::channel();
+        self.receiver = Some(rx);
+
+        thread::spawn(move || {
+            let mut prev_sessions: HashMap<String, Session> = HashMap::new();
+            loop {
+                let sessions: Vec<Session> = session::discover_sessions(&prev_sessions)
+                    .into_iter()
+                    .filter(|s| s.tmux_session.is_some())
+                    .collect();
+
+                prev_sessions = sessions
+                    .iter()
+                    .map(|s| (s.session_id.clone(), s.clone()))
+                    .collect();
+
+                if tx.send(sessions).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_secs(2));
+            }
+        });
+    }
+
+    /// Check for new data from the background thread (non-blocking).
+    pub fn try_receive(&mut self) {
+        if let Some(ref rx) = self.receiver {
+            // Drain to the latest result
+            let mut latest = None;
+            while let Ok(sessions) = rx.try_recv() {
+                latest = Some(sessions);
+            }
+            if let Some(sessions) = latest {
+                self.sessions = sessions;
+                let count = self.filtered_indices().len();
+                if count == 0 {
+                    self.selected = 0;
+                } else if self.selected >= count {
+                    self.selected = count - 1;
+                }
+            }
+        }
+    }
+
+    /// Synchronous refresh for non-TUI commands (json, next, etc.)
     pub fn refresh(&mut self) {
-        let sessions: Vec<Session> = session::discover_sessions(&self.prev_sessions)
+        let sessions: Vec<Session> = session::discover_sessions(&HashMap::new())
             .into_iter()
             .filter(|s| s.tmux_session.is_some())
-            .collect();
-
-        self.prev_sessions = sessions
-            .iter()
-            .map(|s| (s.session_id.clone(), s.clone()))
             .collect();
 
         self.sessions = sessions;
@@ -174,7 +219,6 @@ impl App {
                     if let Some(session) = self.sessions.get(real_idx) {
                         if let Some(name) = &session.tmux_session {
                             tmux::kill_session(name);
-                            self.refresh();
                         }
                     }
                 }
@@ -208,7 +252,6 @@ impl App {
                     if let Some(session) = self.selected_zoomed_session() {
                         if let Some(name) = session.tmux_session.clone() {
                             tmux::kill_session(&name);
-                            self.refresh();
                         }
                     }
                     return;
@@ -441,6 +484,7 @@ impl App {
                     "last_activity": s.last_activity,
                     "started_at": s.started_at,
                     "tags": s.tags,
+                    "subagent_count": s.subagent_count,
                 })
             })
             .collect();

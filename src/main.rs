@@ -10,7 +10,7 @@ mod ui;
 mod view_ui;
 
 use std::io;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::Parser;
 use crossterm::{
@@ -137,12 +137,11 @@ fn run_tui(start_mode: ViewMode) -> io::Result<()> {
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, start_mode: ViewMode) -> io::Result<()> {
     let mut app = App::new();
     app.view_mode = start_mode;
-    app.refresh();
-
-    let refresh_interval = Duration::from_secs(2);
-    let mut last_refresh = Instant::now();
+    app.start_background_refresh();
 
     loop {
+        app.try_receive();
+
         if app.view_mode == ViewMode::View {
             view_ui::resolve_zoom(&mut app);
         }
@@ -163,11 +162,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, start_mode: Vi
 
         if app.should_quit {
             return Ok(());
-        }
-
-        if last_refresh.elapsed() >= refresh_interval {
-            app.refresh();
-            last_refresh = Instant::now();
         }
     }
 }
