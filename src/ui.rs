@@ -214,8 +214,6 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" kill  "),
             Span::styled("/", Style::default().fg(Color::Cyan)),
             Span::raw(" search  "),
-            Span::styled("v", Style::default().fg(Color::Cyan)),
-            Span::raw(" view  "),
             Span::styled("i", Style::default().fg(Color::Cyan)),
             Span::raw(" next input  "),
             Span::styled("q", Style::default().fg(Color::Cyan)),

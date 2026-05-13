@@ -10,8 +10,6 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Open the visual (tamagotchi) dashboard
-    View,
     /// Interactive form to create a new tmux session
     New,
     /// Create a new claude session (background by default)
