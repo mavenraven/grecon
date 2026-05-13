@@ -166,6 +166,8 @@ pub fn format_window(tokens: u64) -> String {
 
 /// Discover sessions by scanning JSONL files, then matching to live tmux panes.
 pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Session> {
+    let t_total = Instant::now();
+
     let claude_dir = match dirs::home_dir() {
         Some(h) => h.join(".claude").join("projects"),
         None => return vec![],
@@ -175,150 +177,123 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         return vec![];
     }
 
-    // Build the live session map: session_id → (pid, tmux_name, started_at)
-    // by joining ~/.claude/sessions/{PID}.json with tmux pane info.
-    let live_map = build_live_session_map();
+    let t0 = Instant::now();
+    let (live_map, pane_contents, tmux_env) = std::thread::scope(|s| {
+        let h1 = s.spawn(build_live_session_map);
+        let h2 = s.spawn(capture_panes_parallel);
+        let h3 = s.spawn(batch_read_tmux_env_parallel);
+        (
+            h1.join().unwrap(),
+            h2.join().unwrap(),
+            h3.join().unwrap(),
+        )
+    });
+    let d_parallel = t0.elapsed();
 
-    // Batch-fetch pane contents and tmux env vars (avoids N subprocess calls per session)
-    let pane_contents = capture_panes_individually();
-    let tmux_env = batch_read_tmux_env();
+    let t_scan = Instant::now();
 
-    let mut sessions: Vec<Session> = Vec::new();
-    let mut matched_session_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-
-    // Scan all JSONL files across project directories.
-    // No mtime cutoff needed — the live_map check (below) already filters out
-    // dead sessions, and skipping the stat() call is faster than doing it.
+    // Phase 1: collect matched JSONL paths (fast, no heavy IO)
+    let mut candidates: HashMap<String, (PathBuf, PathBuf)> = HashMap::new(); // session_id → (jsonl_path, project_dir)
     let entries = match fs::read_dir(&claude_dir) {
         Ok(e) => e,
         Err(_) => return vec![],
     };
-
     for entry in entries.flatten() {
         let project_dir = entry.path();
         if !project_dir.is_dir() {
             continue;
         }
-
         let jsonl_files = match fs::read_dir(&project_dir) {
             Ok(e) => e,
             Err(_) => continue,
         };
-
         for jentry in jsonl_files.flatten() {
             let path = jentry.path();
-            if path.is_dir() {
+            if path.is_dir() || !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
                 continue;
             }
-            if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
-                continue;
-            }
-
-            let session_id = path
-                .file_stem()
+            let session_id = path.file_stem()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-
-            // Look up in live map — skip if no live process
-            let live = match live_map.get(&session_id) {
-                Some(l) => l,
-                None => continue,
-            };
-
-            // Same session_id can appear in multiple project dirs (e.g. session
-            // started in one CWD then moved to a worktree). Prefer the larger file.
-            if matched_session_ids.contains(&session_id) {
-                if let Some(existing) = sessions.iter_mut().find(|s| s.session_id == session_id) {
-                    let existing_size = existing.jsonl_path.metadata().ok().map(|m| m.len()).unwrap_or(0);
-                    let new_size = path.metadata().ok().map(|m| m.len()).unwrap_or(0);
-                    if new_size > existing_size {
-                        let prev = prev_sessions.get(&session_id);
-                        let info = parse_jsonl(
-                            &path,
-                            prev.map(|s| s.last_file_size).unwrap_or(0),
-                            prev.map(|s| s.total_input_tokens).unwrap_or(0),
-                            prev.map(|s| s.total_output_tokens).unwrap_or(0),
-                            prev.and_then(|s| s.model.clone()),
-                            prev.and_then(|s| s.effort.clone()),
-                            prev.and_then(|s| s.last_activity.clone()),
-                        );
-                        let cwd = info.cwd
-                            .or_else(|| prev.map(|s| s.cwd.clone()))
-                            .unwrap_or_else(|| decode_project_path(&project_dir));
-                        let (project_name, relative_dir, branch) = git_project_info(&cwd);
-                        existing.project_name = project_name;
-                        existing.relative_dir = relative_dir;
-                        existing.branch = branch;
-                        existing.cwd = cwd;
-                        existing.model = info.model;
-                        existing.effort = info.effort;
-                        existing.total_input_tokens = info.input_tokens;
-                        existing.total_output_tokens = info.output_tokens;
-                        existing.last_activity = info.last_activity;
-                        existing.jsonl_path = path;
-                        existing.last_file_size = info.file_size;
-                    }
-                }
+            if !live_map.contains_key(&session_id) {
                 continue;
             }
-
-            // Incremental JSONL parsing
-            let prev = prev_sessions.get(&session_id);
-            let info = parse_jsonl(
-                &path,
-                prev.map(|s| s.last_file_size).unwrap_or(0),
-                prev.map(|s| s.total_input_tokens).unwrap_or(0),
-                prev.map(|s| s.total_output_tokens).unwrap_or(0),
-                prev.and_then(|s| s.model.clone()),
-                prev.and_then(|s| s.effort.clone()),
-                prev.and_then(|s| s.last_activity.clone()),
-            );
-
-            let cwd = info
-                .cwd
-                .or_else(|| prev.map(|s| s.cwd.clone()))
-                .unwrap_or_else(|| decode_project_path(&project_dir));
-            let (project_name, relative_dir, branch) = git_project_info(&cwd);
-
-            let raw_status = determine_status(
-                &path,
-                info.input_tokens,
-                info.output_tokens,
-                Some(&live.pane_target),
-                &pane_contents,
-            );
-            let status = debounce_status(&session_id, raw_status);
-
-            matched_session_ids.insert(session_id.clone());
-
-            save_session_name(&session_id, &live.tmux_session);
-            let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
-            let subagent_count = count_subagents(&path);
-            sessions.push(Session {
-                session_id,
-                project_name,
-                branch,
-                cwd,
-                relative_dir,
-                tmux_session: Some(live.tmux_session.clone()),
-                pane_target: Some(live.pane_target.clone()),
-                model: info.model,
-                effort: info.effort,
-                total_input_tokens: info.input_tokens,
-                total_output_tokens: info.output_tokens,
-                status,
-                pid: Some(live.pid),
-                last_activity: info.last_activity,
-                started_at: live.started_at,
-                jsonl_path: path,
-                last_file_size: info.file_size,
-                tags,
-                subagent_count,
-            });
+            // Dedup: prefer larger file
+            if let Some((existing_path, _)) = candidates.get(&session_id) {
+                let existing_size = existing_path.metadata().ok().map(|m| m.len()).unwrap_or(0);
+                let new_size = path.metadata().ok().map(|m| m.len()).unwrap_or(0);
+                if new_size <= existing_size {
+                    continue;
+                }
+            }
+            candidates.insert(session_id, (path, project_dir.clone()));
         }
     }
 
+    // Phase 2: process all matched sessions in parallel (JSONL parse, git, subagents)
+    let candidate_list: Vec<_> = candidates.into_iter().collect();
+    let mut sessions: Vec<Session> = std::thread::scope(|s| {
+        let handles: Vec<_> = candidate_list.iter().map(|(session_id, (path, project_dir))| {
+            s.spawn(|| {
+                let live = &live_map[session_id];
+                let prev = prev_sessions.get(session_id.as_str());
+                let info = parse_jsonl(
+                    path,
+                    prev.map(|s| s.last_file_size).unwrap_or(0),
+                    prev.map(|s| s.total_input_tokens).unwrap_or(0),
+                    prev.map(|s| s.total_output_tokens).unwrap_or(0),
+                    prev.and_then(|s| s.model.clone()),
+                    prev.and_then(|s| s.effort.clone()),
+                    prev.and_then(|s| s.last_activity.clone()),
+                );
+                let cwd = info.cwd.clone()
+                    .or_else(|| prev.map(|s| s.cwd.clone()))
+                    .unwrap_or_else(|| decode_project_path(project_dir));
+                let (project_name, relative_dir, branch) = git_project_info(&cwd);
+                let raw_status = determine_status(
+                    path,
+                    info.input_tokens,
+                    info.output_tokens,
+                    Some(&live.pane_target),
+                    &pane_contents,
+                );
+                let status = debounce_status(session_id, raw_status);
+                save_session_name(session_id, &live.tmux_session);
+                let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
+                let subagent_count = count_subagents(path);
+
+                Session {
+                    session_id: session_id.clone(),
+                    project_name,
+                    branch,
+                    cwd,
+                    relative_dir,
+                    tmux_session: Some(live.tmux_session.clone()),
+                    pane_target: Some(live.pane_target.clone()),
+                    model: info.model,
+                    effort: info.effort,
+                    total_input_tokens: info.input_tokens,
+                    total_output_tokens: info.output_tokens,
+                    status,
+                    pid: Some(live.pid),
+                    last_activity: info.last_activity,
+                    started_at: live.started_at,
+                    jsonl_path: path.clone(),
+                    last_file_size: info.file_size,
+                    tags,
+                    subagent_count,
+                }
+            })
+        }).collect();
+
+        handles.into_iter()
+            .filter_map(|h| h.join().ok())
+            .collect()
+    });
+
+    let d_scan = t_scan.elapsed();
+
+    let t_unmatched = Instant::now();
     // Handle live sessions with no direct JSONL name match.
     // This covers two cases:
     //   1. Brand-new sessions (no JSONL yet) → show as New placeholder
@@ -335,124 +310,125 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         .filter_map(|s| s.pid)
         .collect();
 
-    for (session_id_key, live) in &live_map {
-        if known_pids.contains(&live.pid) {
-            continue;
-        }
+    let unmatched: Vec<_> = live_map.iter()
+        .filter(|(_, live)| !known_pids.contains(&live.pid))
+        .collect();
 
-        // For sessions that have a real session-id (not the "tmux-{name}" placeholder),
-        // try to find the JSONL via resume detection. This handles resumed sessions
-        // where the session file's session-id doesn't match the original JSONL filename.
-        //
-        // However, if the session was /reset after being resumed, the ps args still
-        // show the old --resume ID while a new JSONL exists. In that case, the resume
-        // JSONL is stale. We detect this: if the resumed JSONL's session-id matches
-        // the session_id_key (from {PID}.json), the resume is current; otherwise
-        // /reset happened and we skip the stale resume path.
-        let jsonl_path = if !session_id_key.starts_with("tmux-") {
-            let cached = prev_sessions
-                .get(session_id_key.as_str())
-                .filter(|s| !s.jsonl_path.as_os_str().is_empty())
-                .map(|s| s.jsonl_path.clone());
-            cached.or_else(|| find_jsonl_for_resumed_session_batch(&tmux_env, &live.tmux_session, live.pid))
-        } else {
-            None
-        };
+    let unmatched_sessions: Vec<Session> = std::thread::scope(|s| {
+        let handles: Vec<_> = unmatched.iter().map(|(session_id_key, live)| {
+            s.spawn(|| {
+                let resolved_path = if !session_id_key.starts_with("tmux-") {
+                    let cached = prev_sessions
+                        .get(session_id_key.as_str())
+                        .filter(|s| !s.jsonl_path.as_os_str().is_empty())
+                        .map(|s| s.jsonl_path.clone());
+                    cached.or_else(|| find_jsonl_for_resumed_session_batch(&tmux_env, &live.tmux_session, live.pid))
+                } else {
+                    None
+                };
 
-        let resolved_path = jsonl_path;
+                if let Some(path) = resolved_path {
+                    let prev = prev_sessions.get(session_id_key.as_str());
+                    let info = parse_jsonl(
+                        &path,
+                        prev.map(|s| s.last_file_size).unwrap_or(0),
+                        prev.map(|s| s.total_input_tokens).unwrap_or(0),
+                        prev.map(|s| s.total_output_tokens).unwrap_or(0),
+                        prev.and_then(|s| s.model.clone()),
+                        prev.and_then(|s| s.effort.clone()),
+                        prev.and_then(|s| s.last_activity.clone()),
+                    );
 
-        // Mark as claimed so other sessions in the same dir don't grab the same JSONL
-        if let Some(ref path) = resolved_path {
-            if let Some(stem) = path.file_stem().map(|s| s.to_string_lossy().to_string()) {
-                matched_session_ids.insert(stem);
-            }
-        }
+                    let cwd = info.cwd.clone().unwrap_or_else(|| live.pane_cwd.clone());
+                    let (project_name, relative_dir, branch) = git_project_info(&cwd);
+                    let raw_status = determine_status(
+                        &path,
+                        info.input_tokens,
+                        info.output_tokens,
+                        Some(&live.pane_target),
+                        &pane_contents,
+                    );
+                    let status = debounce_status(session_id_key, raw_status);
+                    save_session_name(session_id_key, &live.tmux_session);
+                    let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
+                    let subagent_count = count_subagents(&path);
 
-        if let Some(path) = resolved_path {
-            let prev = prev_sessions.get(session_id_key.as_str());
-            let info = parse_jsonl(
-                &path,
-                prev.map(|s| s.last_file_size).unwrap_or(0),
-                prev.map(|s| s.total_input_tokens).unwrap_or(0),
-                prev.map(|s| s.total_output_tokens).unwrap_or(0),
-                prev.and_then(|s| s.model.clone()),
-                prev.and_then(|s| s.effort.clone()),
-                prev.and_then(|s| s.last_activity.clone()),
-            );
+                    Session {
+                        session_id: session_id_key.to_string(),
+                        project_name,
+                        relative_dir,
+                        branch,
+                        cwd,
+                        tmux_session: Some(live.tmux_session.clone()),
+                        pane_target: Some(live.pane_target.clone()),
+                        model: info.model,
+                        effort: info.effort,
+                        total_input_tokens: info.input_tokens,
+                        total_output_tokens: info.output_tokens,
+                        status,
+                        pid: Some(live.pid),
+                        last_activity: info.last_activity,
+                        started_at: live.started_at,
+                        jsonl_path: path,
+                        last_file_size: info.file_size,
+                        tags,
+                        subagent_count,
+                    }
+                } else {
+                    save_session_name(session_id_key, &live.tmux_session);
+                    let (project_name, relative_dir, branch) = git_project_info(&live.pane_cwd);
+                    let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
 
-            let cwd = info.cwd.clone().unwrap_or_else(|| live.pane_cwd.clone());
-            let (project_name, relative_dir, branch) = git_project_info(&cwd);
+                    Session {
+                        session_id: session_id_key.to_string(),
+                        project_name,
+                        relative_dir,
+                        branch,
+                        cwd: live.pane_cwd.clone(),
+                        tmux_session: Some(live.tmux_session.clone()),
+                        pane_target: Some(live.pane_target.clone()),
+                        model: None,
+                        effort: None,
+                        total_input_tokens: 0,
+                        total_output_tokens: 0,
+                        status: SessionStatus::New,
+                        pid: Some(live.pid),
+                        last_activity: None,
+                        started_at: live.started_at,
+                        jsonl_path: PathBuf::new(),
+                        last_file_size: 0,
+                        tags,
+                        subagent_count: 0,
+                    }
+                }
+            })
+        }).collect();
 
-            let raw_status = determine_status(
-                &path,
-                info.input_tokens,
-                info.output_tokens,
-                Some(&live.pane_target),
-                &pane_contents,
-            );
-            let status = debounce_status(session_id_key, raw_status);
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    });
 
-            save_session_name(session_id_key, &live.tmux_session);
-            let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
-            let subagent_count = count_subagents(&path);
-            sessions.push(Session {
-                session_id: session_id_key.clone(),
-                project_name,
-                relative_dir,
-                branch,
-                cwd,
-                tmux_session: Some(live.tmux_session.clone()),
-                pane_target: Some(live.pane_target.clone()),
-                model: info.model,
-                effort: info.effort,
-                total_input_tokens: info.input_tokens,
-                total_output_tokens: info.output_tokens,
-                status,
-                pid: Some(live.pid),
-                last_activity: info.last_activity,
-                started_at: live.started_at,
-                jsonl_path: path,
-                last_file_size: info.file_size,
-                tags,
-                subagent_count,
-            });
-        } else {
-            // No JSONL found — brand-new session, show as New placeholder
-            save_session_name(session_id_key, &live.tmux_session);
-            let (project_name, relative_dir, branch) = git_project_info(&live.pane_cwd);
-            let tags = read_tmux_tags_from(&tmux_env, &live.tmux_session);
-            sessions.push(Session {
-                session_id: session_id_key.clone(),
-                project_name,
-                relative_dir,
-                branch,
-                cwd: live.pane_cwd.clone(),
-                tmux_session: Some(live.tmux_session.clone()),
-                pane_target: Some(live.pane_target.clone()),
-                model: None,
-                effort: None,
-                total_input_tokens: 0,
-                total_output_tokens: 0,
-                status: SessionStatus::New,
-                pid: Some(live.pid),
-                last_activity: None,
-                started_at: live.started_at,
-                jsonl_path: PathBuf::new(),
-                last_file_size: 0,
-                tags,
-                subagent_count: 0,
-            });
-        }
-    }
+    sessions.extend(unmatched_sessions);
 
-    // Sort by last activity at minute resolution (most recent first),
-    // then by started_at as tiebreaker. Truncating to the minute prevents
-    // the table from reordering on every poll cycle.
+    let d_unmatched = t_unmatched.elapsed();
+
     sessions.sort_by(|a, b| {
         truncate_to_minute(&b.last_activity)
             .cmp(&truncate_to_minute(&a.last_activity))
             .then(b.started_at.cmp(&a.started_at))
     });
+
+    let d_total = t_total.elapsed();
+    if let Some(home) = dirs::home_dir() {
+        let _ = fs::create_dir_all(home.join(".recon"));
+        let _ = fs::write(
+            home.join(".recon").join("timing.log"),
+            format!(
+                "total={:?} parallel(live_map+capture+env)={:?} scan={:?} unmatched={:?} sessions={}\n",
+                d_total, d_parallel, d_scan, d_unmatched, sessions.len()
+            ),
+        );
+    }
+
     sessions
 }
 
@@ -477,8 +453,11 @@ struct LiveSessionInfo {
 ///   1. tmux list-panes: PID → (tmux_session, pane_cwd) for panes running claude
 ///   2. ~/.claude/sessions/{PID}.json: PID → (session_id, started_at)
 fn build_live_session_map() -> HashMap<String, LiveSessionInfo> {
-    let pid_session_map = read_pid_session_map();
-    let tmux_panes = discover_claude_tmux_panes();
+    let (pid_session_map, tmux_panes) = std::thread::scope(|s| {
+        let h1 = s.spawn(read_pid_session_map);
+        let h2 = s.spawn(discover_claude_tmux_panes);
+        (h1.join().unwrap(), h2.join().unwrap())
+    });
 
     let mut map = HashMap::new();
     for (pid, tmux_session, pane_target, pane_cwd) in tmux_panes {
@@ -952,7 +931,7 @@ fn read_tmux_tags_from(env: &HashMap<String, HashMap<String, String>>, session_n
 
 /// Batch-read environment variables from all tmux sessions in a single subprocess.
 /// Returns session_name → (var_name → value).
-fn batch_read_tmux_env() -> HashMap<String, HashMap<String, String>> {
+fn batch_read_tmux_env_parallel() -> HashMap<String, HashMap<String, String>> {
     let output = match std::process::Command::new("tmux")
         .args(["list-sessions", "-F", "#{session_name}"])
         .output()
@@ -966,24 +945,31 @@ fn batch_read_tmux_env() -> HashMap<String, HashMap<String, String>> {
         .map(|s| s.to_string())
         .collect();
 
-    let mut map = HashMap::new();
-    for name in &session_names {
-        let output = match std::process::Command::new("tmux")
-            .args(["show-environment", "-t", name])
-            .output()
-        {
-            Ok(o) if o.status.success() => o,
-            _ => continue,
-        };
-        let mut vars = HashMap::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Some((k, v)) = line.trim().split_once('=') {
-                vars.insert(k.to_string(), v.to_string());
-            }
-        }
-        map.insert(name.clone(), vars);
-    }
-    map
+    std::thread::scope(|s| {
+        let handles: Vec<_> = session_names.iter().map(|name| {
+            s.spawn(|| {
+                let output = std::process::Command::new("tmux")
+                    .args(["show-environment", "-t", name])
+                    .output();
+                match output {
+                    Ok(o) if o.status.success() => {
+                        let mut vars = HashMap::new();
+                        for line in String::from_utf8_lossy(&o.stdout).lines() {
+                            if let Some((k, v)) = line.trim().split_once('=') {
+                                vars.insert(k.to_string(), v.to_string());
+                            }
+                        }
+                        Some((name.clone(), vars))
+                    }
+                    _ => None,
+                }
+            })
+        }).collect();
+
+        handles.into_iter()
+            .filter_map(|h| h.join().ok().flatten())
+            .collect()
+    })
 }
 
 /// Read a specific env var from the pre-fetched batch map.
@@ -1135,8 +1121,8 @@ fn determine_status(_path: &Path, input_tokens: u64, output_tokens: u64, pane_ta
     }
 }
 
-/// Capture all pane contents. Returns pane_target → content.
-fn capture_panes_individually() -> HashMap<String, String> {
+/// Capture all pane contents in parallel. Returns pane_target → content.
+fn capture_panes_parallel() -> HashMap<String, String> {
     let list_output = match std::process::Command::new("tmux")
         .args(["list-panes", "-a", "-F", "#{session_name}:#{window_index}.#{pane_index}"])
         .output()
@@ -1150,18 +1136,25 @@ fn capture_panes_individually() -> HashMap<String, String> {
         .map(|s| s.to_string())
         .collect();
 
-    let mut map = HashMap::new();
-    for target in &targets {
-        let output = match std::process::Command::new("tmux")
-            .args(["capture-pane", "-t", target, "-p"])
-            .output()
-        {
-            Ok(o) if o.status.success() => o,
-            _ => continue,
-        };
-        map.insert(target.clone(), String::from_utf8_lossy(&output.stdout).to_string());
-    }
-    map
+    std::thread::scope(|s| {
+        let handles: Vec<_> = targets.iter().map(|target| {
+            s.spawn(|| {
+                let output = std::process::Command::new("tmux")
+                    .args(["capture-pane", "-t", target, "-p"])
+                    .output();
+                match output {
+                    Ok(o) if o.status.success() => {
+                        Some((target.clone(), String::from_utf8_lossy(&o.stdout).to_string()))
+                    }
+                    _ => None,
+                }
+            })
+        }).collect();
+
+        handles.into_iter()
+            .filter_map(|h| h.join().ok().flatten())
+            .collect()
+    })
 }
 
 /// Parse pane content to determine status (no subprocess call).
