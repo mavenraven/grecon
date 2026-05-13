@@ -4,7 +4,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::session::{self, Session};
 
@@ -24,27 +24,6 @@ fn serialize_sessions(sessions: &[Session]) -> Vec<u8> {
     buf
 }
 
-struct ServerState {
-    prev_sessions: HashMap<String, Session>,
-    cached_data: Vec<u8>,
-    last_poll: Instant,
-}
-
-impl ServerState {
-    fn poll(&mut self) {
-        let sessions: Vec<Session> = session::discover_sessions(&self.prev_sessions)
-            .into_iter()
-            .filter(|s| s.tmux_session.is_some())
-            .collect();
-        self.prev_sessions = sessions
-            .iter()
-            .map(|s| (s.session_id.clone(), s.clone()))
-            .collect();
-        self.cached_data = serialize_sessions(&sessions);
-        self.last_poll = Instant::now();
-    }
-}
-
 pub fn run_server() {
     let path = socket_path();
     if let Some(parent) = path.parent() {
@@ -52,13 +31,17 @@ pub fn run_server() {
     }
     let _ = std::fs::remove_file(&path);
 
-    let mut state = ServerState {
-        prev_sessions: HashMap::new(),
-        cached_data: Vec::new(),
-        last_poll: Instant::now(),
-    };
-    state.poll();
-    let state = Arc::new(Mutex::new(state));
+    // First poll synchronously so data is ready before accepting connections
+    let mut prev_sessions: HashMap<String, Session> = HashMap::new();
+    let sessions: Vec<Session> = session::discover_sessions(&prev_sessions)
+        .into_iter()
+        .filter(|s| s.tmux_session.is_some())
+        .collect();
+    prev_sessions = sessions
+        .iter()
+        .map(|s| (s.session_id.clone(), s.clone()))
+        .collect();
+    let data: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(serialize_sessions(&sessions)));
 
     let listener = match UnixListener::bind(&path) {
         Ok(l) => l,
@@ -71,24 +54,31 @@ pub fn run_server() {
     eprintln!("recon server listening on {}", path.display());
 
     // Polling thread
-    let state_clone = Arc::clone(&state);
+    let data_clone = Arc::clone(&data);
     thread::spawn(move || {
+        let mut prev = prev_sessions;
         loop {
             thread::sleep(Duration::from_secs(2));
-            state_clone.lock().unwrap().poll();
+
+            let sessions: Vec<Session> = session::discover_sessions(&prev)
+                .into_iter()
+                .filter(|s| s.tmux_session.is_some())
+                .collect();
+
+            prev = sessions
+                .iter()
+                .map(|s| (s.session_id.clone(), s.clone()))
+                .collect();
+
+            *data_clone.lock().unwrap() = serialize_sessions(&sessions);
         }
     });
 
-    // Accept connections — inline refresh if data is stale (OS throttled the timer)
+    // Accept connections — non-blocking data read, no contention
     for stream in listener.incoming() {
         match stream {
             Ok(mut conn) => {
-                let mut st = state.lock().unwrap();
-                if st.last_poll.elapsed() > Duration::from_secs(3) {
-                    st.poll();
-                }
-                let snapshot = st.cached_data.clone();
-                drop(st);
+                let snapshot = data.lock().unwrap().clone();
                 let _ = conn.write_all(&snapshot);
             }
             Err(_) => continue,
