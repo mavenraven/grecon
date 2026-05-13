@@ -15,12 +15,33 @@ fn socket_path() -> PathBuf {
         .join("recon.sock")
 }
 
+fn serialize_sessions(sessions: &[Session]) -> Vec<u8> {
+    let bytes = serde_json::to_vec(sessions).unwrap_or_default();
+    let len = (bytes.len() as u32).to_be_bytes();
+    let mut buf = Vec::with_capacity(4 + bytes.len());
+    buf.extend_from_slice(&len);
+    buf.extend_from_slice(&bytes);
+    buf
+}
+
 pub fn run_server() {
     let path = socket_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     let _ = std::fs::remove_file(&path);
+
+    // First poll synchronously so data is ready before accepting connections
+    let mut prev_sessions: HashMap<String, Session> = HashMap::new();
+    let sessions: Vec<Session> = session::discover_sessions(&prev_sessions)
+        .into_iter()
+        .filter(|s| s.tmux_session.is_some())
+        .collect();
+    prev_sessions = sessions
+        .iter()
+        .map(|s| (s.session_id.clone(), s.clone()))
+        .collect();
+    let data: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(serialize_sessions(&sessions)));
 
     let listener = match UnixListener::bind(&path) {
         Ok(l) => l,
@@ -32,36 +53,28 @@ pub fn run_server() {
 
     eprintln!("recon server listening on {}", path.display());
 
-    let data: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-
     // Polling thread
     let data_clone = Arc::clone(&data);
     thread::spawn(move || {
-        let mut prev_sessions: HashMap<String, Session> = HashMap::new();
+        let mut prev = prev_sessions;
         loop {
-            let sessions: Vec<Session> = session::discover_sessions(&prev_sessions)
+            thread::sleep(Duration::from_secs(2));
+
+            let sessions: Vec<Session> = session::discover_sessions(&prev)
                 .into_iter()
                 .filter(|s| s.tmux_session.is_some())
                 .collect();
 
-            prev_sessions = sessions
+            prev = sessions
                 .iter()
                 .map(|s| (s.session_id.clone(), s.clone()))
                 .collect();
 
-            if let Ok(bytes) = serde_json::to_vec(&sessions) {
-                let len = (bytes.len() as u32).to_be_bytes();
-                let mut buf = Vec::with_capacity(4 + bytes.len());
-                buf.extend_from_slice(&len);
-                buf.extend_from_slice(&bytes);
-                *data_clone.lock().unwrap() = buf;
-            }
-
-            thread::sleep(Duration::from_secs(2));
+            *data_clone.lock().unwrap() = serialize_sessions(&sessions);
         }
     });
 
-    // Accept connections
+    // Accept connections — non-blocking data read, no contention
     for stream in listener.incoming() {
         match stream {
             Ok(mut conn) => {
