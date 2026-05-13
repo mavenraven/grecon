@@ -69,7 +69,7 @@ pub(crate) fn validate_cwd(cwd: &str) -> bool {
     path.is_absolute() && path.is_dir()
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SessionStatus {
     New,
     Working,
@@ -88,7 +88,7 @@ impl SessionStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Session {
     pub session_id: String,
     pub project_name: String,

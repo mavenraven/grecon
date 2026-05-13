@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::server;
 use crate::session::{self, Session};
 use crate::tmux;
 
@@ -96,13 +97,28 @@ impl App {
     }
 
     /// Synchronous refresh for non-TUI commands (json, next, etc.)
+    /// Races the server (fast path) against discover_sessions (slow path).
     pub fn refresh(&mut self) {
-        let sessions: Vec<Session> = session::discover_sessions(&HashMap::new())
-            .into_iter()
-            .filter(|s| s.tmux_session.is_some())
-            .collect();
+        let (tx, rx) = mpsc::channel();
 
-        self.sessions = sessions;
+        let tx_server = tx.clone();
+        thread::spawn(move || {
+            if let Some(sessions) = server::try_fetch() {
+                let _ = tx_server.send(sessions);
+            }
+        });
+
+        thread::spawn(move || {
+            let sessions: Vec<Session> = session::discover_sessions(&HashMap::new())
+                .into_iter()
+                .filter(|s| s.tmux_session.is_some())
+                .collect();
+            let _ = tx.send(sessions);
+        });
+
+        if let Ok(sessions) = rx.recv() {
+            self.sessions = sessions;
+        }
 
         let count = self.filtered_indices().len();
         if count == 0 {

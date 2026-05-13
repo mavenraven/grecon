@@ -55,6 +55,8 @@ pub enum Command {
         #[arg(long)]
         tag: Vec<String>,
     },
+    /// Run a background server that caches session data for fast startup
+    Server,
     /// Save all live sessions to disk for restoring later
     Park,
     /// Restore previously parked sessions

@@ -4,6 +4,7 @@ mod history;
 mod model;
 mod new_session;
 mod park;
+mod server;
 mod session;
 mod tmux;
 mod ui;
@@ -94,6 +95,9 @@ fn main() -> io::Result<()> {
             let mut app = App::new();
             app.refresh();
             println!("{}", app.to_json(&tag));
+        }
+        Some(Command::Server) => {
+            server::run_server();
         }
         Some(Command::Park) => {
             park::park();
