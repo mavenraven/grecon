@@ -195,9 +195,9 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
 
                 let widths = [
                     Constraint::Length(4),              // #
-                    Constraint::Length(20),             // Name
+                    Constraint::Length(28),             // Name
                     Constraint::Length(git_col_width),  // Git(Project::Branch)
-                    Constraint::Length(14),             // Model
+                    Constraint::Length(12),             // Model
                     Constraint::Length(14),             // Context
                     Constraint::Min(12),               // Last Active
                 ];

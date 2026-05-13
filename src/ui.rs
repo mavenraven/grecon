@@ -142,11 +142,11 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
 
     let widths = [
         Constraint::Length(4),   // #
-        Constraint::Length(16),  // Session
+        Constraint::Length(24),  // Session
         Constraint::Min(20),    // Project (repo + branch)
         Constraint::Length(20), // Directory
         Constraint::Length(10), // Status
-        Constraint::Length(20), // Model
+        Constraint::Length(12), // Model
         Constraint::Length(14), // Context
         Constraint::Length(14), // Last Activity
     ];
