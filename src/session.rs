@@ -832,21 +832,6 @@ fn find_jsonl_for_resumed_session_batch(env: &HashMap<String, HashMap<String, St
     find_jsonl_by_session_id(&original_id)
 }
 
-/// Read a variable from a tmux session's environment table.
-fn read_tmux_env(session_name: &str, var: &str) -> Option<String> {
-    let output = std::process::Command::new("tmux")
-        .args(["show-environment", "-t", session_name, var])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-    // Output format: "VAR=value\n"
-    let line = String::from_utf8_lossy(&output.stdout);
-    line.trim().split_once('=').map(|(_, v)| v.to_string())
-}
-
 /// Read RECON_TAGS from a pre-fetched environment map.
 fn read_tmux_tags_from(env: &HashMap<String, HashMap<String, String>>, session_name: &str) -> HashMap<String, String> {
     env.get(session_name)
@@ -932,57 +917,6 @@ fn find_jsonl_by_session_id(session_id: &str) -> Option<PathBuf> {
 /// Find the cwd used by an existing session (by scanning its JSONL for a cwd entry).
 /// Used by the resume command to start the tmux session in the right directory.
 /// Return session-id → tmux info for all currently live claude sessions.
-/// Used by the resume picker to filter out still-running sessions.
-/// Standalone live-map builder for non-TUI callers (resume picker, etc.).
-fn build_live_session_map_standalone() -> HashMap<String, LiveSessionInfo> {
-    let (pane_lines, pid_session_map, children_map) = std::thread::scope(|s| {
-        let h1 = s.spawn(|| {
-            std::process::Command::new("tmux")
-                .args(["list-panes", "-a", "-F",
-                    "#{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_default()
-        });
-        let h2 = s.spawn(read_pid_session_map);
-        let h3 = s.spawn(build_children_map);
-        (h1.join().unwrap(), h2.join().unwrap(), h3.join().unwrap())
-    });
-    let (claude_panes, _) = process_pane_lines(&pane_lines, &children_map);
-    build_live_map_from_panes(claude_panes, &pid_session_map)
-}
-
-pub fn build_live_session_map_public() -> HashMap<String, String> {
-    build_live_session_map_standalone()
-        .into_iter()
-        .map(|(id, info)| (id, info.tmux_session))
-        .collect()
-}
-
-/// Check if a session ID (JSONL-based) is already running in tmux.
-/// Returns the pane target (session:window.pane) if found.
-pub fn find_live_tmux_for_session(session_id: &str) -> Option<String> {
-    let live_map = build_live_session_map_standalone();
-
-    // Direct match: PID file's session_id == the one we're looking for.
-    if let Some(info) = live_map.get(session_id) {
-        return Some(info.pane_target.clone());
-    }
-
-    // Resumed session: RECON_RESUMED_FROM env var matches.
-    for (_, info) in &live_map {
-        if let Some(orig_id) = read_tmux_env(&info.tmux_session, "RECON_RESUMED_FROM") {
-            if orig_id == session_id {
-                return Some(info.pane_target.clone());
-            }
-        }
-    }
-
-    None
-}
-
 pub fn find_session_cwd(session_id: &str) -> Option<String> {
     let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
     for entry in fs::read_dir(&projects_dir).ok()?.flatten() {

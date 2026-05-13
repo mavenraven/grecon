@@ -1,5 +1,6 @@
 use std::process::Command;
 
+use crate::server;
 use crate::session;
 
 /// Switch to a tmux pane (inside tmux) or attach to its session (outside tmux).
@@ -75,7 +76,7 @@ pub fn create_session(name: &str, cwd: &str, command: Option<&str>, tags: &[Stri
 /// Resume a claude session in a new tmux session.
 /// No-op if the session is already running — returns the existing tmux name.
 pub fn resume_session(session_id: &str, name: Option<&str>) -> Result<String, String> {
-    if let Some(existing) = session::find_live_tmux_for_session(session_id) {
+    if let Some(existing) = find_live_session_from_server(session_id) {
         return Ok(existing);
     }
 
@@ -231,4 +232,11 @@ mod tests {
     fn sanitize_unicode_preserved() {
         assert_eq!(sanitize_session_name("café"), "café");
     }
+}
+
+fn find_live_session_from_server(session_id: &str) -> Option<String> {
+    let sessions = server::try_fetch()?;
+    sessions.into_iter()
+        .find(|s| s.session_id == session_id)
+        .and_then(|s| s.pane_target)
 }

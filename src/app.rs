@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -50,26 +49,17 @@ impl App {
         }
     }
 
-    /// Start the background refresh thread. Returns immediately.
+    /// Start a background thread that polls the server for fresh data.
     pub fn start_background_refresh(&mut self) {
         let (tx, rx) = mpsc::channel();
         self.receiver = Some(rx);
 
         thread::spawn(move || {
-            let mut prev_sessions: HashMap<String, Session> = HashMap::new();
             loop {
-                let sessions: Vec<Session> = session::discover_sessions(&prev_sessions)
-                    .into_iter()
-                    .filter(|s| s.tmux_session.is_some())
-                    .collect();
-
-                prev_sessions = sessions
-                    .iter()
-                    .map(|s| (s.session_id.clone(), s.clone()))
-                    .collect();
-
-                if tx.send(sessions).is_err() {
-                    break;
+                if let Some(sessions) = server::try_fetch() {
+                    if tx.send(sessions).is_err() {
+                        break;
+                    }
                 }
                 thread::sleep(Duration::from_secs(2));
             }
@@ -96,29 +86,9 @@ impl App {
         }
     }
 
-    /// Synchronous refresh for non-TUI commands (json, next, etc.)
-    /// Races the server (fast path) against discover_sessions (slow path).
+    /// Fetch session data from the server.
     pub fn refresh(&mut self) {
-        let (tx, rx) = mpsc::channel();
-
-        let tx_server = tx.clone();
-        thread::spawn(move || {
-            if let Some(sessions) = server::try_fetch() {
-                let _ = tx_server.send(sessions);
-            }
-        });
-
-        thread::spawn(move || {
-            let sessions: Vec<Session> = session::discover_sessions(&HashMap::new())
-                .into_iter()
-                .filter(|s| s.tmux_session.is_some())
-                .collect();
-            let _ = tx.send(sessions);
-        });
-
-        if let Ok(sessions) = rx.recv() {
-            self.sessions = sessions;
-        }
+        self.sessions = server::require_fetch();
 
         let count = self.filtered_indices().len();
         if count == 0 {

@@ -77,7 +77,7 @@ pub fn run_server() {
 pub fn try_fetch() -> Option<Vec<Session>> {
     let path = socket_path();
     let mut conn = UnixStream::connect(&path).ok()?;
-    conn.set_read_timeout(Some(Duration::from_millis(50))).ok()?;
+    conn.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
 
     let mut len_buf = [0u8; 4];
     conn.read_exact(&mut len_buf).ok()?;
@@ -90,4 +90,15 @@ pub fn try_fetch() -> Option<Vec<Session>> {
     let mut buf = vec![0u8; len];
     conn.read_exact(&mut buf).ok()?;
     serde_json::from_slice(&buf).ok()
+}
+
+/// Fetch sessions from the server, or exit with a message if unavailable.
+pub fn require_fetch() -> Vec<Session> {
+    match try_fetch() {
+        Some(sessions) => sessions,
+        None => {
+            eprintln!("recon server is not running. Start it with: recon server");
+            std::process::exit(1);
+        }
+    }
 }

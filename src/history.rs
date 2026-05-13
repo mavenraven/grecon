@@ -97,7 +97,11 @@ fn find_resumable_sessions() -> Vec<ResumeEntry> {
 }
 
 fn get_live_session_ids() -> HashSet<String> {
-    crate::session::build_live_session_map_public().into_keys().collect()
+    crate::server::try_fetch()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.session_id)
+        .collect()
 }
 
 /// Interactive TUI picker for resuming a past session.
