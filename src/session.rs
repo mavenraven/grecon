@@ -166,8 +166,6 @@ pub fn format_window(tokens: u64) -> String {
 
 /// Discover sessions by scanning JSONL files, then matching to live tmux panes.
 pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Session> {
-    let t_total = Instant::now();
-
     let claude_dir = match dirs::home_dir() {
         Some(h) => h.join(".claude").join("projects"),
         None => return vec![],
@@ -176,8 +174,6 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
     if !claude_dir.exists() {
         return vec![];
     }
-
-    let t0 = Instant::now();
 
     // Phase A: single list-panes call + pid/ps data in parallel
     let (pane_lines, pid_session_map, children_map) = std::thread::scope(|s| {
@@ -201,19 +197,12 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
     let live_map = build_live_map_from_panes(claude_panes, &pid_session_map);
     let claude_targets: Vec<String> = live_map.values().map(|l| l.pane_target.clone()).collect();
 
-    let d_phase_a = t0.elapsed();
-
-    // Phase B: capture only claude panes + read env for unique sessions — in parallel
-    let t1 = Instant::now();
+    // Phase B: capture claude panes + read env — in parallel
     let (pane_contents, tmux_env) = std::thread::scope(|s| {
         let h1 = s.spawn(|| capture_panes_by_target(&claude_targets));
         let h2 = s.spawn(|| read_env_for_sessions(&session_names));
         (h1.join().unwrap(), h2.join().unwrap())
     });
-
-    let d_phase_b = t1.elapsed();
-
-    let t_scan = Instant::now();
 
     // Phase 1: collect matched JSONL paths (fast, no heavy IO)
     let mut candidates: HashMap<String, (PathBuf, PathBuf)> = HashMap::new(); // session_id → (jsonl_path, project_dir)
@@ -314,9 +303,6 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             .collect()
     });
 
-    let d_scan = t_scan.elapsed();
-
-    let t_unmatched = Instant::now();
     // Handle live sessions with no direct JSONL name match.
     // This covers two cases:
     //   1. Brand-new sessions (no JSONL yet) → show as New placeholder
@@ -432,26 +418,11 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
 
     sessions.extend(unmatched_sessions);
 
-    let d_unmatched = t_unmatched.elapsed();
-
     sessions.sort_by(|a, b| {
         truncate_to_minute(&b.last_activity)
             .cmp(&truncate_to_minute(&a.last_activity))
             .then(b.started_at.cmp(&a.started_at))
     });
-
-    let d_total = t_total.elapsed();
-    if let Some(home) = dirs::home_dir() {
-        let _ = fs::create_dir_all(home.join(".recon"));
-        let pid = std::process::id();
-        let _ = fs::write(
-            home.join(".recon").join(format!("timing-{pid}.log")),
-            format!(
-                "total={:?} phaseA={:?} phaseB={:?} scan={:?} unmatched={:?} sessions={}\n",
-                d_total, d_phase_a, d_phase_b, d_scan, d_unmatched, sessions.len()
-            ),
-        );
-    }
 
     sessions
 }
@@ -550,9 +521,7 @@ fn git_project_info(cwd: &str) -> (String, Option<String>, Option<String>) {
         }
     }
 
-    let repo_name = fetch_git_repo_name(cwd);
-    let relative_dir = fetch_relative_dir(cwd);
-    let branch = fetch_git_branch(cwd);
+    let (repo_name, relative_dir, branch) = fetch_git_info_combined(cwd);
 
     let mut cache = GIT_CACHE.lock().unwrap();
     if cache.is_none() {
@@ -570,86 +539,66 @@ fn git_project_info(cwd: &str) -> (String, Option<String>, Option<String>) {
     (repo_name, relative_dir, branch)
 }
 
-fn fetch_git_repo_name(cwd: &str) -> String {
-    // Use --git-common-dir to get a stable name across worktrees
-    fetch_canonical_repo_name(cwd).unwrap_or_else(|| {
+/// Single git subprocess to get repo name, relative dir, and branch.
+fn fetch_git_info_combined(cwd: &str) -> (String, Option<String>, Option<String>) {
+    let fallback = || {
         Path::new(cwd)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| cwd.to_string())
-    })
-}
-
-/// Get the canonical repo name from --git-common-dir (stable across worktrees).
-fn fetch_canonical_repo_name(cwd: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["-C", cwd, "rev-parse", "--git-common-dir"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let common = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let common_path = if Path::new(&common).is_absolute() {
-        PathBuf::from(&common)
-    } else {
-        PathBuf::from(cwd).join(&common)
     };
-    let resolved = common_path.canonicalize().unwrap_or(common_path);
-    let repo_root = if resolved.file_name().map(|n| n == ".git").unwrap_or(false) {
-        resolved.parent()?
-    } else {
-        &resolved
-    };
-    repo_root.file_name().map(|n| n.to_string_lossy().to_string())
-}
 
-fn fetch_git_branch(cwd: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if branch.is_empty() || branch == "HEAD" {
-        None
-    } else {
-        Some(branch)
-    }
-}
-
-/// Compute the relative path from the git worktree root to the CWD.
-///
-/// Returns None if CWD is the worktree root (or not a git repo).
-///   /repos/line5              → None
-///   /repos/line5/tools/solo   → Some("tools/solo")
-fn fetch_relative_dir(cwd: &str) -> Option<String> {
-    let toplevel = match std::process::Command::new("git")
-        .args(["-C", cwd, "rev-parse", "--show-toplevel"])
+    let output = match std::process::Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--git-common-dir", "--show-toplevel", "--abbrev-ref", "HEAD"])
         .output()
     {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-        _ => return None,
+        Ok(o) if o.status.success() => o,
+        _ => return (fallback(), None, None),
     };
 
-    // Canonicalize both paths to resolve symlinks (e.g. /tmp → /private/tmp on macOS)
-    let cwd_resolved = Path::new(cwd)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(cwd));
-    let top_resolved = Path::new(&toplevel)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(&toplevel));
-    let relative = cwd_resolved
-        .strip_prefix(&top_resolved)
-        .unwrap_or(Path::new(""));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    if lines.len() < 3 {
+        return (fallback(), None, None);
+    }
 
-    if relative.as_os_str().is_empty() || relative == Path::new(".") {
+    // Line 0: --git-common-dir
+    let common = lines[0].trim();
+    let common_path = if Path::new(common).is_absolute() {
+        PathBuf::from(common)
+    } else {
+        PathBuf::from(cwd).join(common)
+    };
+    let resolved = common_path.canonicalize().unwrap_or(common_path);
+    let repo_name = if resolved.file_name().map(|n| n == ".git").unwrap_or(false) {
+        resolved.parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+    } else {
+        resolved.file_name().map(|n| n.to_string_lossy().to_string())
+    }
+    .unwrap_or_else(fallback);
+
+    // Line 1: --show-toplevel
+    let toplevel = lines[1].trim();
+    let cwd_resolved = Path::new(cwd).canonicalize().unwrap_or_else(|_| PathBuf::from(cwd));
+    let top_resolved = Path::new(toplevel).canonicalize().unwrap_or_else(|_| PathBuf::from(toplevel));
+    let relative = cwd_resolved.strip_prefix(&top_resolved).unwrap_or(Path::new(""));
+    let relative_dir = if relative.as_os_str().is_empty() || relative == Path::new(".") {
         None
     } else {
         Some(relative.display().to_string())
-    }
+    };
+
+    // Line 2: --abbrev-ref HEAD
+    let branch_str = lines[2].trim();
+    let branch = if branch_str.is_empty() || branch_str == "HEAD" {
+        None
+    } else {
+        Some(branch_str.to_string())
+    };
+
+    (repo_name, relative_dir, branch)
 }
 
 /// Decode an encoded project directory name back to a path.
