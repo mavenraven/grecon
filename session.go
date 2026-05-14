@@ -188,7 +188,6 @@ func debounceStatus(sessionID string, raw SessionStatus) SessionStatus {
 	if prev, ok := statusDebounceMap[sessionID]; ok {
 		if prev.status == StatusWorking && raw == StatusIdle {
 			if time.Since(prev.since).Seconds() < statusHoldSecs {
-				statusDebounceMap[sessionID] = statusHold{status: StatusWorking, since: now}
 				return StatusWorking
 			}
 		}
