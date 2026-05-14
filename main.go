@@ -3,13 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"grecon/client"
+	"grecon/server"
+
 	"github.com/spf13/cobra"
 )
-
-var execCommand = exec.Command
 
 func main() {
 	rootCmd := &cobra.Command{
@@ -17,7 +16,7 @@ func main() {
 		Short:   "Monitor and manage Claude Code sessions running in tmux",
 		Version: "0.6.1",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTUI()
+			return client.RunTUI()
 		},
 		SilenceUsage: true,
 	}
@@ -26,9 +25,9 @@ func main() {
 		Use:   "new",
 		Short: "Interactive form to create a new tmux session",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, ok := runNewSessionForm()
+			name, ok := client.RunNewSessionForm()
 			if ok && name != "" {
-				switchToPane(name)
+				client.SwitchToPane(name)
 			}
 			return nil
 		},
@@ -41,7 +40,7 @@ func main() {
 		Use:   "launch",
 		Short: "Create a new claude session (background by default)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			defName, defCWD := defaultNewSessionInfo()
+			defName, defCWD := client.DefaultNewSessionInfo()
 			name := defName
 			if launchName != "" {
 				name = launchName
@@ -54,12 +53,12 @@ func main() {
 			if launchCommand != "" {
 				cmdPtr = &launchCommand
 			}
-			sessName, err := createSession(name, cwd, cmdPtr, launchTags, launchWorktree)
+			sessName, err := client.CreateSession(name, cwd, cmdPtr, launchTags, launchWorktree)
 			if err != nil {
 				return err
 			}
 			if launchAttach {
-				switchToPane(sessName)
+				client.SwitchToPane(sessName)
 			}
 			fmt.Fprintf(os.Stderr, "Session: %s\n", sessName)
 			return nil
@@ -83,25 +82,25 @@ func main() {
 				if resumeName != "" {
 					namePtr = &resumeName
 				}
-				sess, err := resumeSession(resumeID, namePtr)
+				sess, err := client.ResumeSession(resumeID, namePtr)
 				if err != nil {
 					return err
 				}
 				if !resumeNoAttach {
-					switchToPane(sess)
+					client.SwitchToPane(sess)
 				}
 				fmt.Fprintf(os.Stderr, "Resumed in session: %s\n", sess)
 				return nil
 			}
-			sessionID, sessName, ok := runResumePicker()
+			sessionID, sessName, ok := client.RunResumePicker()
 			if !ok {
 				return nil
 			}
-			sess, err := resumeSession(sessionID, &sessName)
+			sess, err := client.ResumeSession(sessionID, &sessName)
 			if err != nil {
 				return err
 			}
-			switchToPane(sess)
+			client.SwitchToPane(sess)
 			fmt.Fprintf(os.Stderr, "Resumed in session: %s\n", sess)
 			return nil
 		},
@@ -114,11 +113,11 @@ func main() {
 		Use:   "next",
 		Short: "Jump to the next agent waiting for input",
 		Run: func(cmd *cobra.Command, args []string) {
-			app := NewApp()
+			app := client.NewApp()
 			app.Refresh()
 			for _, s := range app.Sessions {
-				if s.Status == StatusInput && s.PaneTarget != "" {
-					switchToPane(s.PaneTarget)
+				if s.Status == server.StatusInput && s.PaneTarget != "" {
+					client.SwitchToPane(s.PaneTarget)
 					return
 				}
 			}
@@ -130,7 +129,7 @@ func main() {
 		Use:   "json",
 		Short: "Print all session state as JSON",
 		Run: func(cmd *cobra.Command, args []string) {
-			app := NewApp()
+			app := client.NewApp()
 			app.Refresh()
 			fmt.Println(app.ToJSON(jsonTags))
 		},
@@ -141,7 +140,7 @@ func main() {
 		Use:   "server",
 		Short: "Run a background server that caches session data",
 		Run: func(cmd *cobra.Command, args []string) {
-			runServer()
+			server.RunServer()
 		},
 	}
 
@@ -149,7 +148,7 @@ func main() {
 		Use:   "park",
 		Short: "Save all live sessions to disk for restoring later",
 		Run: func(cmd *cobra.Command, args []string) {
-			park()
+			client.Park()
 		},
 	}
 
@@ -157,7 +156,7 @@ func main() {
 		Use:   "unpark",
 		Short: "Restore previously parked sessions",
 		Run: func(cmd *cobra.Command, args []string) {
-			unpark()
+			client.Unpark()
 		},
 	}
 
@@ -166,11 +165,4 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
-}
-
-func runTUI() error {
-	m := newTUIModel()
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
-	return err
 }

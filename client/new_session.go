@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"fmt"
@@ -22,13 +22,13 @@ type newSessionModel struct {
 	worktree  bool
 	cursorPos int
 	active    field
-	result    *string // nil = still running, empty = cancelled, non-empty = session name
+	result    *string
 	width     int
 	height    int
 }
 
 func newNewSessionModel() newSessionModel {
-	name, cwd := defaultNewSessionInfo()
+	name, cwd := DefaultNewSessionInfo()
 	return newSessionModel{
 		name:      name,
 		cwd:       cwd,
@@ -61,7 +61,7 @@ func (m *newSessionModel) submit() {
 			cwd = home + cwd[1:]
 		}
 	}
-	name, err := createSession(strings.TrimSpace(m.name), cwd, nil, nil, m.worktree)
+	name, err := CreateSession(strings.TrimSpace(m.name), cwd, nil, nil, m.worktree)
 	if err != nil {
 		empty := ""
 		m.result = &empty
@@ -203,7 +203,6 @@ func (m newSessionModel) View() string {
 		cwdBorder = cyanStyle
 	}
 
-	// Name field
 	b.WriteString(nameBorder.Render("┌─ Name ─" + strings.Repeat("─", max(0, m.width-10)) + "┐"))
 	b.WriteString("\n")
 	b.WriteString(nameBorder.Render("│") + " " + m.name + strings.Repeat(" ", max(0, m.width-len(m.name)-4)) + " " + nameBorder.Render("│"))
@@ -211,7 +210,6 @@ func (m newSessionModel) View() string {
 	b.WriteString(nameBorder.Render("└" + strings.Repeat("─", max(0, m.width-2)) + "┘"))
 	b.WriteString("\n")
 
-	// CWD field
 	b.WriteString(cwdBorder.Render("┌─ Directory ─" + strings.Repeat("─", max(0, m.width-15)) + "┐"))
 	b.WriteString("\n")
 	b.WriteString(cwdBorder.Render("│") + " " + m.cwd + strings.Repeat(" ", max(0, m.width-len(m.cwd)-4)) + " " + cwdBorder.Render("│"))
@@ -219,7 +217,6 @@ func (m newSessionModel) View() string {
 	b.WriteString(cwdBorder.Render("└" + strings.Repeat("─", max(0, m.width-2)) + "┘"))
 	b.WriteString("\n")
 
-	// Worktree toggle
 	marker := " "
 	if m.worktree {
 		marker = "x"
@@ -231,7 +228,6 @@ func (m newSessionModel) View() string {
 	b.WriteString(wtStyle.Render(fmt.Sprintf(" [%s] Worktree", marker)))
 	b.WriteString("\n")
 
-	// Hints
 	switch m.active {
 	case fieldName:
 		b.WriteString(" " + cyanStyle.Render("Enter") + " next  " +
@@ -251,7 +247,7 @@ func (m newSessionModel) View() string {
 	return b.String()
 }
 
-func runNewSessionForm() (string, bool) {
+func RunNewSessionForm() (string, bool) {
 	m := newNewSessionModel()
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	result, err := p.Run()
@@ -263,11 +259,4 @@ func runNewSessionForm() (string, bool) {
 		return *rm.result, true
 	}
 	return "", false
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

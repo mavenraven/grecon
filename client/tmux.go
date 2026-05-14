@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"fmt"
@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"grecon/server"
 )
 
-func switchToPane(target string) {
+func SwitchToPane(target string) {
 	if os.Getenv("TMUX") != "" {
 		exec.Command("tmux", "switch-client", "-t", target).Run()
 	} else {
@@ -21,8 +23,8 @@ func switchToPane(target string) {
 	}
 }
 
-func createSession(name, cwd string, command *string, tags []string, worktree bool) (string, error) {
-	if !validateCWD(cwd) {
+func CreateSession(name, cwd string, command *string, tags []string, worktree bool) (string, error) {
+	if !server.ValidateCWD(cwd) {
 		return "", fmt.Errorf("invalid working directory: %s", cwd)
 	}
 
@@ -54,7 +56,7 @@ func createSession(name, cwd string, command *string, tags []string, worktree bo
 	return sessionName, nil
 }
 
-func resumeSession(sessionID string, name *string) (string, error) {
+func ResumeSession(sessionID string, name *string) (string, error) {
 	if existing := findLiveSessionFromServer(sessionID); existing != "" {
 		return existing, nil
 	}
@@ -67,8 +69,8 @@ func resumeSession(sessionID string, name *string) (string, error) {
 		tmuxName = *name
 	}
 
-	cwd := findSessionCWD(sessionID)
-	if cwd == "" || !validateCWD(cwd) {
+	cwd := server.FindSessionCWD(sessionID)
+	if cwd == "" || !server.ValidateCWD(cwd) {
 		if wd, err := os.Getwd(); err == nil {
 			cwd = wd
 		} else {
@@ -92,7 +94,7 @@ func resumeSession(sessionID string, name *string) (string, error) {
 	return sessionName, nil
 }
 
-func defaultNewSessionInfo() (string, string) {
+func DefaultNewSessionInfo() (string, string) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		cwd = "."
@@ -133,7 +135,7 @@ func whichClaude() string {
 	return path
 }
 
-func killSession(name string) bool {
+func KillSession(name string) bool {
 	return exec.Command("tmux", "kill-session", "-t", name).Run() == nil
 }
 
@@ -154,7 +156,7 @@ func sanitizeSessionName(name string) string {
 }
 
 func findLiveSessionFromServer(sessionID string) string {
-	sessions := tryFetch()
+	sessions := server.TryFetch()
 	if sessions == nil {
 		return ""
 	}

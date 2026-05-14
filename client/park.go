@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"encoding/json"
@@ -28,7 +28,7 @@ func parkFilePath() string {
 	return filepath.Join(home, ".local", "state", "recon", "parked.json")
 }
 
-func park() {
+func Park() {
 	app := NewApp()
 	app.Refresh()
 
@@ -87,7 +87,7 @@ func park() {
 	}
 }
 
-func unpark() {
+func Unpark() {
 	path := parkFilePath()
 	if path == "" {
 		fmt.Fprintln(os.Stderr, "Could not determine home directory.")
@@ -116,7 +116,7 @@ func unpark() {
 
 	for _, s := range pf.Sessions {
 		name := s.TmuxSession
-		sess, err := resumeSession(s.SessionID, &name)
+		sess, err := ResumeSession(s.SessionID, &name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  Failed to restore %s: %v\n", s.TmuxSession, err)
 		} else {

@@ -1,9 +1,11 @@
-package main
+package client
 
 import (
 	"fmt"
 	"strings"
 	"time"
+
+	"grecon/server"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -115,10 +117,9 @@ func (m tuiModel) View() string {
 	var b strings.Builder
 
 	showSearch := m.app.FilterActive || m.app.FilterText != ""
-	// Total height: border top + header + rows + border bottom + (search?) + footer
-	tableContentHeight := m.height - 2 - 1 // -2 for borders, -1 for footer
+	tableContentHeight := m.height - 2 - 1
 	if showSearch {
-		tableContentHeight-- // search bar
+		tableContentHeight--
 	}
 	if tableContentHeight < 2 {
 		tableContentHeight = 2
@@ -134,9 +135,8 @@ func (m tuiModel) View() string {
 }
 
 func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
-	innerW := width - 2 // subtract left/right border chars
+	innerW := width - 2
 
-	// Column widths matching Rust exactly
 	colNum := 4
 	colSession := 24
 	colDir := 20
@@ -149,7 +149,6 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		colProject = 20
 	}
 
-	// Top border with title
 	title := " grecon — Claude Code Sessions "
 	topBorder := "┌" + title
 	remaining := innerW - lipgloss.Width(title)
@@ -160,7 +159,6 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	b.WriteString(topBorder)
 	b.WriteString("\n")
 
-	// Header row
 	header := buildRow([]colSpec{
 		{colNum, " # "},
 		{colSession, "Session"},
@@ -176,7 +174,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	b.WriteString("│\n")
 
 	filtered := app.FilteredIndices()
-	rowsAvail := contentHeight - 1 // -1 for header
+	rowsAvail := contentHeight - 1
 
 	for di, realIdx := range filtered {
 		if di >= rowsAvail {
@@ -184,7 +182,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		}
 		s := app.Sessions[realIdx]
 
-		needBg := di == app.Selected || s.Status == StatusInput
+		needBg := di == app.Selected || s.Status == server.StatusInput
 
 		num := fmt.Sprintf(" %d ", realIdx+1)
 		tmuxName := s.TmuxSession
@@ -205,17 +203,17 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 			projectCol += ansiColor("90", "::") + ansiColor("32", s.Branch)
 		}
 
-		dirCol := ansiColor("90", truncPlain(shortenHome(s.CWD), colDir))
+		dirCol := ansiColor("90", truncPlain(ShortenHome(s.CWD), colDir))
 
 		var statusDot, statusLabel, statusAnsi string
 		switch s.Status {
-		case StatusNew:
+		case server.StatusNew:
 			statusDot, statusLabel, statusAnsi = "●", "New", "34"
-		case StatusWorking:
+		case server.StatusWorking:
 			statusDot, statusLabel, statusAnsi = "●", "Working", "32"
-		case StatusIdle:
+		case server.StatusIdle:
 			statusDot, statusLabel, statusAnsi = "●", "Idle", "90"
-		case StatusInput:
+		case server.StatusInput:
 			statusDot, statusLabel, statusAnsi = "●", "Input", "33"
 		}
 		statusCol := ansiColor(statusAnsi, statusDot+" "+statusLabel)
@@ -232,7 +230,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 
 		activity := "—"
 		if s.LastActivity != "" {
-			activity = formatTimestamp(s.LastActivity)
+			activity = FormatTimestamp(s.LastActivity)
 		}
 
 		row := padCol(num, colNum) +
@@ -251,9 +249,9 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 
 		if needBg {
 			var bgCode string
-			if s.Status == StatusInput && di == app.Selected {
+			if s.Status == server.StatusInput && di == app.Selected {
 				bgCode = "\x1b[48;2;80;65;0m"
-			} else if s.Status == StatusInput {
+			} else if s.Status == server.StatusInput {
 				bgCode = "\x1b[48;2;50;40;0m"
 			} else {
 				bgCode = "\x1b[48;5;240m"
@@ -266,7 +264,6 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		b.WriteString("│\n")
 	}
 
-	// Fill empty rows
 	emptyRow := strings.Repeat(" ", innerW)
 	for i := len(filtered); i < rowsAvail; i++ {
 		b.WriteString("│")
@@ -274,7 +271,6 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		b.WriteString("│\n")
 	}
 
-	// Bottom border
 	b.WriteString("└")
 	b.WriteString(strings.Repeat("─", innerW))
 	b.WriteString("┘\n")
@@ -311,6 +307,13 @@ func renderFooter(b *strings.Builder, app *App, width int) {
 	b.WriteString(fitToWidth(line, width))
 }
 
+func RunTUI() error {
+	m := newTUIModel()
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	_, err := p.Run()
+	return err
+}
+
 type colSpec struct {
 	width int
 	text  string
@@ -324,8 +327,6 @@ func buildRow(cols []colSpec) string {
 	return b.String()
 }
 
-// padCol truncates content to exactly width visible characters, then pads with spaces.
-// Handles ANSI escape sequences correctly.
 func padCol(s string, width int) string {
 	s = truncAnsi(s, width)
 	visLen := lipgloss.Width(s)
@@ -343,8 +344,6 @@ func fitToWidth(s string, width int) string {
 	return s + strings.Repeat(" ", width-visLen)
 }
 
-// truncAnsi truncates a string that may contain ANSI escapes to maxWidth visible characters.
-// Ensures any open ANSI sequences are properly closed with a reset.
 func truncAnsi(s string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
@@ -382,16 +381,11 @@ func truncAnsi(s string, maxWidth int) string {
 	return out
 }
 
-// ansiColor wraps text with a foreground color using raw ANSI codes.
-// Only sets/resets foreground — never touches background.
 func ansiColor(code, text string) string {
 	return "\x1b[" + code + "m" + text + "\x1b[39m"
 }
 
-// applyRowBg applies a background color to an entire row, re-applying it after
-// any embedded ANSI resets so the background persists across styled columns.
 func applyRowBg(row, bgCode string) string {
-	// Replace all forms of reset/background-clear that lipgloss might emit
 	row = strings.ReplaceAll(row, "\x1b[0m", "\x1b[0m"+bgCode)
 	row = strings.ReplaceAll(row, "\x1b[m", "\x1b[m"+bgCode)
 	row = strings.ReplaceAll(row, "\x1b[49m", bgCode)
@@ -400,7 +394,6 @@ func applyRowBg(row, bgCode string) string {
 	return bgCode + row + "\x1b[0m"
 }
 
-// visibleWidth counts visible characters, skipping ANSI escape sequences.
 func visibleWidth(s string) int {
 	count := 0
 	inEscape := false

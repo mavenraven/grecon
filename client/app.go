@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"encoding/json"
@@ -7,10 +7,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"grecon/server"
 )
 
 type App struct {
-	Sessions     []*Session
+	Sessions     []*server.Session
 	Selected     int
 	ShouldQuit   bool
 	Tick         uint64
@@ -19,7 +21,7 @@ type App struct {
 	FilterCursor int
 
 	mu       sync.Mutex
-	latest   []*Session
+	latest   []*server.Session
 	hasNew   bool
 	stopChan chan struct{}
 }
@@ -33,7 +35,7 @@ func NewApp() *App {
 func (a *App) StartBackgroundRefresh() {
 	go func() {
 		for {
-			sessions := tryFetch()
+			sessions := server.TryFetch()
 			if sessions != nil {
 				a.mu.Lock()
 				a.latest = sessions
@@ -73,7 +75,7 @@ func (a *App) TryReceive() {
 }
 
 func (a *App) Refresh() {
-	a.Sessions = requireFetch()
+	a.Sessions = server.RequireFetch()
 	count := len(a.FilteredIndices())
 	if count == 0 {
 		a.Selected = 0
@@ -136,8 +138,8 @@ func (a *App) HandleKey(code string, ctrl bool) {
 
 func (a *App) jumpToNextInput() {
 	for _, s := range a.Sessions {
-		if s.Status == StatusInput && s.PaneTarget != "" {
-			switchToPane(s.PaneTarget)
+		if s.Status == server.StatusInput && s.PaneTarget != "" {
+			SwitchToPane(s.PaneTarget)
 			a.ShouldQuit = true
 			return
 		}
@@ -173,7 +175,7 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 		if idx := a.resolveSelected(); idx >= 0 {
 			s := a.Sessions[idx]
 			if s.PaneTarget != "" {
-				switchToPane(s.PaneTarget)
+				SwitchToPane(s.PaneTarget)
 				a.ShouldQuit = true
 			}
 		}
@@ -181,7 +183,7 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 		if idx := a.resolveSelected(); idx >= 0 {
 			s := a.Sessions[idx]
 			if s.TmuxSession != "" {
-				killSession(s.TmuxSession)
+				KillSession(s.TmuxSession)
 			}
 		}
 	}
@@ -199,7 +201,7 @@ func (a *App) handleKeyFilter(code string, ctrl bool) {
 		if len(indices) == 1 {
 			s := a.Sessions[indices[0]]
 			if s.PaneTarget != "" {
-				switchToPane(s.PaneTarget)
+				SwitchToPane(s.PaneTarget)
 				a.ShouldQuit = true
 				return
 			}
@@ -314,7 +316,7 @@ func (a *App) ToJSON(tagFilters []string) string {
 	return string(out)
 }
 
-func shortenHome(path string) string {
+func ShortenHome(path string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return path
@@ -325,7 +327,7 @@ func shortenHome(path string) string {
 	return path
 }
 
-func formatTimestamp(ts string) string {
+func FormatTimestamp(ts string) string {
 	t, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
 		t, err = time.Parse(time.RFC3339, ts)

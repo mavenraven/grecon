@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"encoding/binary"
@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func socketPath() string {
+func SocketPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "/tmp/.recon/grecon.sock"
@@ -20,7 +20,7 @@ func socketPath() string {
 	return filepath.Join(home, ".recon", "grecon.sock")
 }
 
-func serializeSessions(sessions []*Session) []byte {
+func SerializeSessions(sessions []*Session) []byte {
 	data, err := json.Marshal(sessions)
 	if err != nil {
 		data = []byte("[]")
@@ -31,14 +31,13 @@ func serializeSessions(sessions []*Session) []byte {
 	return buf
 }
 
-func runServer() {
-	path := socketPath()
+func RunServer() {
+	path := SocketPath()
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.Remove(path)
 
-	// First poll synchronously so data is ready before accepting connections
 	prevSessions := make(map[string]*Session)
-	allSessions := discoverSessions(prevSessions)
+	allSessions := DiscoverSessions(prevSessions)
 	var sessions []*Session
 	for _, s := range allSessions {
 		if s.TmuxSession != "" {
@@ -51,7 +50,7 @@ func runServer() {
 	}
 
 	var mu sync.Mutex
-	data := serializeSessions(sessions)
+	data := SerializeSessions(sessions)
 
 	listener, err := net.Listen("unix", path)
 	if err != nil {
@@ -62,7 +61,6 @@ func runServer() {
 
 	fmt.Fprintf(os.Stderr, "grecon server listening on %s\n", path)
 
-	// Polling thread
 	go func() {
 		prev := prevSessions
 		pollCount := uint64(0)
@@ -73,7 +71,7 @@ func runServer() {
 
 			pollCount++
 			pollStart := time.Now()
-			allSessions := discoverSessions(prev)
+			allSessions := DiscoverSessions(prev)
 			var sessions []*Session
 			for _, s := range allSessions {
 				if s.TmuxSession != "" {
@@ -88,7 +86,7 @@ func runServer() {
 			}
 
 			mu.Lock()
-			data = serializeSessions(sessions)
+			data = SerializeSessions(sessions)
 			mu.Unlock()
 
 			fmt.Printf("poll #%d: sleep=%v discover=%dms sessions=%d\n",
@@ -115,8 +113,8 @@ func runServer() {
 	}
 }
 
-func tryFetch() []*Session {
-	path := socketPath()
+func TryFetch() []*Session {
+	path := SocketPath()
 	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
 	if err != nil {
 		return nil
@@ -145,8 +143,8 @@ func tryFetch() []*Session {
 	return sessions
 }
 
-func requireFetch() []*Session {
-	sessions := tryFetch()
+func RequireFetch() []*Session {
+	sessions := TryFetch()
 	if sessions != nil {
 		return sessions
 	}

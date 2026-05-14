@@ -1,4 +1,4 @@
-package main
+package client
 
 import (
 	"bufio"
@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"grecon/server"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -22,7 +24,7 @@ type ResumeEntry struct {
 	Branch     string
 	Model      string
 	Tokens     uint64
-	LastActive string // RFC3339
+	LastActive string
 	ProjectDir string
 }
 
@@ -45,7 +47,7 @@ func findResumableSessions() []ResumeEntry {
 			continue
 		}
 		dirPath := filepath.Join(projectsDir, dir.Name())
-		cwd := decodeProjectPath(dirPath)
+		cwd := server.DecodeProjectPath(dirPath)
 		files, err := os.ReadDir(dirPath)
 		if err != nil {
 			continue
@@ -86,7 +88,7 @@ func findResumableSessions() []ResumeEntry {
 }
 
 func getLiveSessionIDs() map[string]bool {
-	sessions := tryFetch()
+	sessions := server.TryFetch()
 	ids := make(map[string]bool)
 	for _, s := range sessions {
 		ids[s.SessionID] = true
@@ -125,7 +127,6 @@ func readJSONLSummary(path string) jsonlSummary {
 	const tailBytes int64 = 1024 * 1024
 	if size > tailBytes {
 		f.Seek(size-tailBytes, io.SeekStart)
-		// Discard partial first line
 		reader := bufio.NewReader(f)
 		reader.ReadString('\n')
 	}
@@ -340,7 +341,7 @@ func (m resumeModel) View() string {
 		h = 24
 	}
 
-	innerW := w - 2 // left/right border
+	innerW := w - 2
 
 	colNum := 4
 	colName := 28
@@ -348,19 +349,18 @@ func (m resumeModel) View() string {
 	colContext := 14
 	colActivity := 14
 
-	// Dynamic git column width based on actual content (matching Rust)
 	gitColWidth := 10
 	for _, e := range m.entries {
 		project := dirName(e.CWD)
 		gitLen := len(project)
 		if e.Branch != "" {
-			gitLen += 2 + len(e.Branch) // "project::branch"
+			gitLen += 2 + len(e.Branch)
 		}
 		if gitLen > gitColWidth {
 			gitColWidth = gitLen
 		}
 	}
-	gitColWidth += 2 // padding
+	gitColWidth += 2
 	remaining := innerW - colNum - colName - colModel - colContext - colActivity
 	if gitColWidth > remaining {
 		gitColWidth = remaining
@@ -369,7 +369,6 @@ func (m resumeModel) View() string {
 		gitColWidth = 20
 	}
 
-	// Top border with title
 	title := " Resume Session "
 	topBorder := "┌" + title
 	rem := innerW - len(title)
@@ -380,7 +379,6 @@ func (m resumeModel) View() string {
 	b.WriteString(topBorder)
 	b.WriteString("\n")
 
-	// Content height: total - top border - bottom border - footer
 	contentHeight := h - 3
 
 	if len(m.entries) == 0 {
@@ -394,7 +392,6 @@ func (m resumeModel) View() string {
 		b.WriteString("│\n")
 		contentHeight--
 	} else {
-		// Header row
 		header := buildRow([]colSpec{
 			{colNum, " # "},
 			{colName, "Session"},
@@ -416,7 +413,7 @@ func (m resumeModel) View() string {
 			if i >= maxRows {
 				break
 			}
-			name := loadSessionName(e.SessionID)
+			name := server.LoadSessionName(e.SessionID)
 			if name == "" {
 				if len(e.SessionID) > 8 {
 					name = e.SessionID[:8]
@@ -433,14 +430,14 @@ func (m resumeModel) View() string {
 
 			modelDisplay := "—"
 			if e.Model != "" {
-				modelDisplay = modelDisplayName(e.Model)
+				modelDisplay = server.ModelDisplayName(e.Model)
 			}
 
 			window := uint64(200_000)
 			if e.Model != "" {
-				window = modelContextWindow(e.Model)
+				window = server.ModelContextWindow(e.Model)
 			}
-			tokens := fmt.Sprintf("%dk / %s", e.Tokens/1000, formatWindow(window))
+			tokens := fmt.Sprintf("%dk / %s", e.Tokens/1000, server.FormatWindow(window))
 			lastActive := formatRelative(e.LastActive)
 
 			row := padCol(fmt.Sprintf(" %d ", i+1), colNum) +
@@ -466,7 +463,6 @@ func (m resumeModel) View() string {
 		}
 	}
 
-	// Fill empty rows
 	emptyRow := strings.Repeat(" ", innerW)
 	for i := 0; i < contentHeight; i++ {
 		b.WriteString("│")
@@ -474,12 +470,10 @@ func (m resumeModel) View() string {
 		b.WriteString("│\n")
 	}
 
-	// Bottom border
 	b.WriteString("└")
 	b.WriteString(strings.Repeat("─", innerW))
 	b.WriteString("┘\n")
 
-	// Footer
 	if m.confirmDelete {
 		b.WriteString(
 			lipgloss.NewStyle().Foreground(colorRed).Render(" Delete session? ") +
@@ -498,7 +492,7 @@ func (m resumeModel) View() string {
 	return b.String()
 }
 
-func runResumePicker() (string, string, bool) {
+func RunResumePicker() (string, string, bool) {
 	m := newResumeModel()
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	result, err := p.Run()

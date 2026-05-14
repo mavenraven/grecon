@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"bufio"
@@ -95,7 +95,7 @@ func (s *Session) RoomID() string {
 func (s *Session) effectiveWindow() uint64 {
 	nominal := uint64(200_000)
 	if s.Model != "" {
-		nominal = modelContextWindow(s.Model)
+		nominal = ModelContextWindow(s.Model)
 	}
 	used := s.TotalInputTokens + s.TotalOutputTokens
 	if used > nominal && nominal < 1_000_000 {
@@ -107,7 +107,7 @@ func (s *Session) effectiveWindow() uint64 {
 func (s *Session) TokenDisplay() string {
 	used := s.TotalInputTokens + s.TotalOutputTokens
 	window := s.effectiveWindow()
-	return fmt.Sprintf("%dk / %s", used/1000, formatWindow(window))
+	return fmt.Sprintf("%dk / %s", used/1000, FormatWindow(window))
 }
 
 func (s *Session) TokenRatio() float64 {
@@ -123,17 +123,17 @@ func (s *Session) ModelDisplay() string {
 	if s.Model == "" {
 		return "—"
 	}
-	return formatModelWithEffort(s.Model, s.Effort)
+	return FormatModelWithEffort(s.Model, s.Effort)
 }
 
-func formatWindow(tokens uint64) string {
+func FormatWindow(tokens uint64) string {
 	if tokens >= 1_000_000 {
 		return fmt.Sprintf("%dM", tokens/1_000_000)
 	}
 	return fmt.Sprintf("%dk", tokens/1000)
 }
 
-func validateCWD(cwd string) bool {
+func ValidateCWD(cwd string) bool {
 	if !filepath.IsAbs(cwd) {
 		return false
 	}
@@ -174,7 +174,7 @@ type statusHold struct {
 }
 
 var (
-	statusDebounceMu sync.Mutex
+	statusDebounceMu  sync.Mutex
 	statusDebounceMap = make(map[string]statusHold)
 )
 
@@ -213,7 +213,7 @@ var (
 const gitCacheTTL = 30 * time.Second
 
 func gitProjectInfo(cwd string) (projectName, relativeDir, branch string) {
-	if !validateCWD(cwd) {
+	if !ValidateCWD(cwd) {
 		return filepath.Base(cwd), "", ""
 	}
 
@@ -251,7 +251,6 @@ func fetchGitInfoCombined(cwd string) (repoName, relativeDir, branch string) {
 		return fallback, "", ""
 	}
 
-	// Line 0: --git-common-dir
 	common := strings.TrimSpace(lines[0])
 	var commonPath string
 	if filepath.IsAbs(common) {
@@ -272,7 +271,6 @@ func fetchGitInfoCombined(cwd string) (repoName, relativeDir, branch string) {
 		repoName = fallback
 	}
 
-	// Line 1: --show-toplevel
 	toplevel := strings.TrimSpace(lines[1])
 	cwdResolved, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
@@ -287,7 +285,6 @@ func fetchGitInfoCombined(cwd string) (repoName, relativeDir, branch string) {
 		relativeDir = rel
 	}
 
-	// Line 2: --abbrev-ref HEAD
 	branchStr := strings.TrimSpace(lines[2])
 	if branchStr != "" && branchStr != "HEAD" {
 		branch = branchStr
@@ -295,7 +292,7 @@ func fetchGitInfoCombined(cwd string) (repoName, relativeDir, branch string) {
 	return
 }
 
-func decodeProjectPath(projectDir string) string {
+func DecodeProjectPath(projectDir string) string {
 	name := filepath.Base(projectDir)
 	if strings.HasPrefix(name, "-") {
 		return strings.Replace(strings.Replace(name, "-", "/", 1), "-", "/", -1)
@@ -322,7 +319,6 @@ func readLineCapped(reader *bufio.Reader) (string, int, error) {
 			break
 		}
 
-		// Use ReadBytes for simplicity — read until newline
 		line, err := reader.ReadBytes('\n')
 		n := len(line)
 		totalConsumed += n
@@ -342,7 +338,6 @@ func readLineCapped(reader *bufio.Reader) (string, int, error) {
 		if err != nil {
 			return "", totalConsumed, err
 		}
-		// Found newline
 		break
 	}
 
@@ -492,7 +487,7 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 				modelName = strings.TrimSuffix(modelName, "(200k context)")
 				modelName = strings.TrimSpace(modelName)
 
-				if id, ok := modelIDFromDisplayName(modelName); ok {
+				if id, ok := ModelIDFromDisplayName(modelName); ok {
 					model = id
 				}
 			}
@@ -533,7 +528,7 @@ func stripANSI(s string) string {
 
 // --- Session discovery ---
 
-func discoverSessions(prevSessions map[string]*Session) []*Session {
+func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
@@ -543,7 +538,6 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 		return nil
 	}
 
-	// Phase A: parallel tmux list-panes + pid/session map + children map
 	var paneLines string
 	var pidSessionMap map[int]sessionFileInfo
 	var childrenMap map[int][]int
@@ -576,7 +570,6 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 		claudeTargets = append(claudeTargets, live.paneTarget)
 	}
 
-	// Phase B: capture panes + read env in parallel
 	var paneContents map[string]string
 	var tmuxEnv map[string]map[string]string
 
@@ -592,8 +585,7 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 	}()
 	wgB.Wait()
 
-	// Phase 1: collect matched JSONL paths
-	candidates := make(map[string][2]string) // session_id -> [jsonl_path, project_dir]
+	candidates := make(map[string][2]string)
 	entries, err := os.ReadDir(claudeDir)
 	if err != nil {
 		return nil
@@ -627,10 +619,6 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 		}
 	}
 
-	// Phase 2: process matched sessions in parallel
-	type sessionResult struct {
-		session *Session
-	}
 	candidateList := make([][3]string, 0, len(candidates))
 	for sid, paths := range candidates {
 		candidateList = append(candidateList, [3]string{sid, paths[0], paths[1]})
@@ -662,13 +650,13 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 				cwd = prev.CWD
 			}
 			if cwd == "" {
-				cwd = decodeProjectPath(projectDir)
+				cwd = DecodeProjectPath(projectDir)
 			}
 
 			projName, relDir, branch := gitProjectInfo(cwd)
 			rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 			status := debounceStatus(sessionID, rawStatus)
-			saveSessionName(sessionID, live.tmuxSession)
+			SaveSessionName(sessionID, live.tmuxSession)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 			subagentCount := countSubagents(path)
 
@@ -704,7 +692,6 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 		}
 	}
 
-	// Handle unmatched live sessions
 	knownPIDs := make(map[int]bool)
 	for _, s := range sessions {
 		if s.PID != 0 {
@@ -761,7 +748,7 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 				projName, relDir, branch := gitProjectInfo(cwd)
 				rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 				status := debounceStatus(sessionID, rawStatus)
-				saveSessionName(sessionID, live.tmuxSession)
+				SaveSessionName(sessionID, live.tmuxSession)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 				subagentCount := countSubagents(resolvedPath)
 
@@ -787,7 +774,7 @@ func discoverSessions(prevSessions map[string]*Session) []*Session {
 					SubagentCount:     subagentCount,
 				}
 			} else {
-				saveSessionName(sessionID, live.tmuxSession)
+				SaveSessionName(sessionID, live.tmuxSession)
 				projName, relDir, branch := gitProjectInfo(live.paneCWD)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 
@@ -833,8 +820,6 @@ func truncateToMinute(ts string) string {
 	}
 	return ts
 }
-
-// --- PID session map ---
 
 func readPIDSessionMap() map[int]sessionFileInfo {
 	home, err := os.UserHomeDir()
@@ -1140,7 +1125,7 @@ func reconSessionsDir() string {
 	return filepath.Join(home, ".recon", "sessions")
 }
 
-func saveSessionName(sessionID, tmuxName string) {
+func SaveSessionName(sessionID, tmuxName string) {
 	if strings.HasPrefix(sessionID, "tmux-") {
 		return
 	}
@@ -1156,7 +1141,7 @@ func saveSessionName(sessionID, tmuxName string) {
 	os.WriteFile(path, []byte(tmuxName), 0o644)
 }
 
-func loadSessionName(sessionID string) string {
+func LoadSessionName(sessionID string) string {
 	dir := reconSessionsDir()
 	if dir == "" {
 		return ""
@@ -1165,8 +1150,7 @@ func loadSessionName(sessionID string) string {
 	if err != nil {
 		return ""
 	}
-	s := strings.TrimSpace(string(data))
-	return s
+	return strings.TrimSpace(string(data))
 }
 
 func readTmuxTagsFrom(env map[string]map[string]string, sessionName string) map[string]string {
@@ -1245,7 +1229,7 @@ func findJSONLBySessionID(sessionID string) string {
 	return bestPath
 }
 
-func findSessionCWD(sessionID string) string {
+func FindSessionCWD(sessionID string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
