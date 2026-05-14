@@ -1,0 +1,1283 @@
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const maxLineBytes = 10 * 1024 * 1024
+
+type SessionStatus int
+
+const (
+	StatusNew SessionStatus = iota
+	StatusWorking
+	StatusIdle
+	StatusInput
+)
+
+func (s SessionStatus) Label() string {
+	switch s {
+	case StatusNew:
+		return "New"
+	case StatusWorking:
+		return "Working"
+	case StatusIdle:
+		return "Idle"
+	case StatusInput:
+		return "Input"
+	default:
+		return "Unknown"
+	}
+}
+
+func (s SessionStatus) MarshalJSON() ([]byte, error) {
+	return json.Marshal(s.Label())
+}
+
+func (s *SessionStatus) UnmarshalJSON(data []byte) error {
+	var label string
+	if err := json.Unmarshal(data, &label); err != nil {
+		return err
+	}
+	switch label {
+	case "New":
+		*s = StatusNew
+	case "Working":
+		*s = StatusWorking
+	case "Idle":
+		*s = StatusIdle
+	case "Input":
+		*s = StatusInput
+	}
+	return nil
+}
+
+type Session struct {
+	SessionID         string            `json:"session_id"`
+	ProjectName       string            `json:"project_name"`
+	Branch            string            `json:"branch,omitempty"`
+	CWD               string            `json:"cwd"`
+	RelativeDir       string            `json:"relative_dir,omitempty"`
+	TmuxSession       string            `json:"tmux_session,omitempty"`
+	PaneTarget        string            `json:"pane_target,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	Effort            string            `json:"effort,omitempty"`
+	TotalInputTokens  uint64            `json:"total_input_tokens"`
+	TotalOutputTokens uint64            `json:"total_output_tokens"`
+	Status            SessionStatus     `json:"status"`
+	PID               int               `json:"pid,omitempty"`
+	LastActivity      string            `json:"last_activity,omitempty"`
+	StartedAt         uint64            `json:"started_at"`
+	JSONLPath         string            `json:"jsonl_path"`
+	LastFileSize      uint64            `json:"last_file_size"`
+	Tags              map[string]string `json:"tags"`
+	SubagentCount     int               `json:"subagent_count"`
+}
+
+func (s *Session) RoomID() string {
+	if s.RelativeDir != "" {
+		return s.ProjectName + " › " + s.RelativeDir
+	}
+	return s.ProjectName
+}
+
+func (s *Session) effectiveWindow() uint64 {
+	nominal := uint64(200_000)
+	if s.Model != "" {
+		nominal = modelContextWindow(s.Model)
+	}
+	used := s.TotalInputTokens + s.TotalOutputTokens
+	if used > nominal && nominal < 1_000_000 {
+		return 1_000_000
+	}
+	return nominal
+}
+
+func (s *Session) TokenDisplay() string {
+	used := s.TotalInputTokens + s.TotalOutputTokens
+	window := s.effectiveWindow()
+	return fmt.Sprintf("%dk / %s", used/1000, formatWindow(window))
+}
+
+func (s *Session) TokenRatio() float64 {
+	used := s.TotalInputTokens + s.TotalOutputTokens
+	window := s.effectiveWindow()
+	if window == 0 {
+		return 0
+	}
+	return float64(used) / float64(window)
+}
+
+func (s *Session) ModelDisplay() string {
+	if s.Model == "" {
+		return "—"
+	}
+	return formatModelWithEffort(s.Model, s.Effort)
+}
+
+func formatWindow(tokens uint64) string {
+	if tokens >= 1_000_000 {
+		return fmt.Sprintf("%dM", tokens/1_000_000)
+	}
+	return fmt.Sprintf("%dk", tokens/1000)
+}
+
+func validateCWD(cwd string) bool {
+	if !filepath.IsAbs(cwd) {
+		return false
+	}
+	info, err := os.Stat(cwd)
+	return err == nil && info.IsDir()
+}
+
+// --- Live session discovery ---
+
+type liveSessionInfo struct {
+	pid         int
+	tmuxSession string
+	paneTarget  string
+	paneCWD     string
+	startedAt   uint64
+}
+
+type sessionFileInfo struct {
+	sessionID string
+	startedAt uint64
+}
+
+type parsedInfo struct {
+	inputTokens  uint64
+	outputTokens uint64
+	model        string
+	effort       string
+	cwd          string
+	lastActivity string
+	fileSize     uint64
+}
+
+// --- Status debounce ---
+
+type statusHold struct {
+	status SessionStatus
+	since  time.Time
+}
+
+var (
+	statusDebounceMu sync.Mutex
+	statusDebounceMap = make(map[string]statusHold)
+)
+
+const statusHoldSecs = 3
+
+func debounceStatus(sessionID string, raw SessionStatus) SessionStatus {
+	statusDebounceMu.Lock()
+	defer statusDebounceMu.Unlock()
+
+	now := time.Now()
+	if prev, ok := statusDebounceMap[sessionID]; ok {
+		if prev.status == StatusWorking && raw == StatusIdle {
+			if time.Since(prev.since).Seconds() < statusHoldSecs {
+				statusDebounceMap[sessionID] = statusHold{status: StatusWorking, since: now}
+				return StatusWorking
+			}
+		}
+	}
+	statusDebounceMap[sessionID] = statusHold{status: raw, since: now}
+	return raw
+}
+
+// --- Git cache ---
+
+type gitInfo struct {
+	repoName    string
+	relativeDir string
+	branch      string
+	fetchedAt   time.Time
+}
+
+var (
+	gitCacheMu sync.Mutex
+	gitCache   = make(map[string]gitInfo)
+)
+
+const gitCacheTTL = 30 * time.Second
+
+func gitProjectInfo(cwd string) (projectName, relativeDir, branch string) {
+	if !validateCWD(cwd) {
+		return filepath.Base(cwd), "", ""
+	}
+
+	gitCacheMu.Lock()
+	if info, ok := gitCache[cwd]; ok && time.Since(info.fetchedAt) < gitCacheTTL {
+		gitCacheMu.Unlock()
+		return info.repoName, info.relativeDir, info.branch
+	}
+	gitCacheMu.Unlock()
+
+	projectName, relativeDir, branch = fetchGitInfoCombined(cwd)
+
+	gitCacheMu.Lock()
+	gitCache[cwd] = gitInfo{
+		repoName:    projectName,
+		relativeDir: relativeDir,
+		branch:      branch,
+		fetchedAt:   time.Now(),
+	}
+	gitCacheMu.Unlock()
+	return
+}
+
+func fetchGitInfoCombined(cwd string) (repoName, relativeDir, branch string) {
+	fallback := filepath.Base(cwd)
+
+	out, err := exec.Command("git", "-C", cwd, "rev-parse",
+		"--git-common-dir", "--show-toplevel", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return fallback, "", ""
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 3 {
+		return fallback, "", ""
+	}
+
+	// Line 0: --git-common-dir
+	common := strings.TrimSpace(lines[0])
+	var commonPath string
+	if filepath.IsAbs(common) {
+		commonPath = common
+	} else {
+		commonPath = filepath.Join(cwd, common)
+	}
+	resolved, err := filepath.EvalSymlinks(commonPath)
+	if err != nil {
+		resolved = commonPath
+	}
+	if filepath.Base(resolved) == ".git" {
+		repoName = filepath.Base(filepath.Dir(resolved))
+	} else {
+		repoName = filepath.Base(resolved)
+	}
+	if repoName == "" {
+		repoName = fallback
+	}
+
+	// Line 1: --show-toplevel
+	toplevel := strings.TrimSpace(lines[1])
+	cwdResolved, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		cwdResolved = cwd
+	}
+	topResolved, err := filepath.EvalSymlinks(toplevel)
+	if err != nil {
+		topResolved = toplevel
+	}
+	rel, err := filepath.Rel(topResolved, cwdResolved)
+	if err == nil && rel != "." && rel != "" {
+		relativeDir = rel
+	}
+
+	// Line 2: --abbrev-ref HEAD
+	branchStr := strings.TrimSpace(lines[2])
+	if branchStr != "" && branchStr != "HEAD" {
+		branch = branchStr
+	}
+	return
+}
+
+func decodeProjectPath(projectDir string) string {
+	name := filepath.Base(projectDir)
+	if strings.HasPrefix(name, "-") {
+		return strings.Replace(strings.Replace(name, "-", "/", 1), "-", "/", -1)
+	}
+	return name
+}
+
+// --- JSONL parsing ---
+
+func readLineCapped(reader *bufio.Reader) (string, int, error) {
+	var buf []byte
+	overflowed := false
+	totalConsumed := 0
+
+	for {
+		chunk, err := reader.Peek(reader.Buffered())
+		if len(chunk) == 0 && err != nil {
+			if err == io.EOF && totalConsumed > 0 {
+				break
+			}
+			if totalConsumed == 0 {
+				return "", 0, err
+			}
+			break
+		}
+
+		// Use ReadBytes for simplicity — read until newline
+		line, err := reader.ReadBytes('\n')
+		n := len(line)
+		totalConsumed += n
+
+		if !overflowed {
+			if len(buf)+n <= maxLineBytes {
+				buf = append(buf, line...)
+			} else {
+				overflowed = true
+				buf = nil
+			}
+		}
+
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", totalConsumed, err
+		}
+		// Found newline
+		break
+	}
+
+	if totalConsumed == 0 {
+		return "", 0, io.EOF
+	}
+	if overflowed {
+		return "", totalConsumed, nil
+	}
+	return string(buf), totalConsumed, nil
+}
+
+type jsonlEntry struct {
+	Message   *messageEntry `json:"message,omitempty"`
+	Timestamp string        `json:"timestamp,omitempty"`
+	CWD       string        `json:"cwd,omitempty"`
+	Type      string        `json:"type,omitempty"`
+}
+
+type messageEntry struct {
+	Model string     `json:"model,omitempty"`
+	Usage *usageEntry `json:"usage,omitempty"`
+}
+
+type usageEntry struct {
+	InputTokens              uint64 `json:"input_tokens"`
+	OutputTokens             uint64 `json:"output_tokens"`
+	CacheCreationInputTokens uint64 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     uint64 `json:"cache_read_input_tokens"`
+}
+
+func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevModel, prevEffort, prevActivity string) parsedInfo {
+	f, err := os.Open(path)
+	if err != nil {
+		return parsedInfo{
+			inputTokens: prevInput, outputTokens: prevOutput,
+			model: prevModel, effort: prevEffort, lastActivity: prevActivity,
+		}
+	}
+	defer f.Close()
+
+	stat, _ := f.Stat()
+	fileSize := uint64(stat.Size())
+
+	if fileSize == prevFileSize && prevFileSize > 0 {
+		return parsedInfo{
+			inputTokens: prevInput, outputTokens: prevOutput,
+			model: prevModel, effort: prevEffort, lastActivity: prevActivity,
+			fileSize: fileSize,
+		}
+	}
+
+	totalInput := prevInput
+	totalOutput := prevOutput
+	model := prevModel
+	effort := prevEffort
+	lastActivity := prevActivity
+	var cwd string
+
+	if prevFileSize > 0 {
+		f.Seek(int64(prevFileSize), io.SeekStart)
+	} else {
+		totalInput = 0
+		totalOutput = 0
+		model = ""
+		effort = ""
+		lastActivity = ""
+	}
+
+	reader := bufio.NewReaderSize(f, 64*1024)
+	for {
+		line, _, err := readLineCapped(reader)
+		if err != nil {
+			break
+		}
+
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || !strings.Contains(trimmed, `"type"`) {
+			continue
+		}
+
+		if strings.Contains(trimmed, `"type":"assistant"`) {
+			if strings.Contains(trimmed, `"<synthetic>"`) {
+				continue
+			}
+			var entry jsonlEntry
+			if json.Unmarshal([]byte(trimmed), &entry) != nil {
+				continue
+			}
+			if entry.Timestamp != "" {
+				lastActivity = entry.Timestamp
+			}
+			if entry.CWD != "" {
+				cwd = entry.CWD
+			}
+			if entry.Message != nil {
+				if entry.Message.Model != "" {
+					model = entry.Message.Model
+				}
+				if u := entry.Message.Usage; u != nil {
+					totalInput = u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
+					totalOutput = u.OutputTokens
+				}
+			}
+		} else if strings.Contains(trimmed, `"type":"user"`) || strings.Contains(trimmed, `"type":"system"`) {
+			var entry jsonlEntry
+			if json.Unmarshal([]byte(trimmed), &entry) != nil {
+				continue
+			}
+			if entry.Timestamp != "" {
+				lastActivity = entry.Timestamp
+			}
+			if entry.CWD != "" {
+				cwd = entry.CWD
+			}
+
+			if strings.Contains(trimmed, "<local-command-stdout>Set model to") &&
+				!strings.Contains(trimmed, "toolUseResult") &&
+				!strings.Contains(trimmed, "tool_result") {
+
+				idx := strings.Index(trimmed, "<local-command-stdout>Set model to")
+				tagEnd := idx + len("<local-command-stdout>Set model to")
+				remainder := trimmed[tagEnd:]
+				if closeIdx := strings.Index(remainder, "</local-command-stdout>"); closeIdx >= 0 {
+					remainder = remainder[:closeIdx]
+				}
+				remainder = stripANSI(remainder)
+				remainder = strings.TrimSpace(remainder)
+
+				modelPart := remainder
+				if wp := strings.Index(remainder, "with "); wp >= 0 {
+					after := remainder[wp+5:]
+					if ep := strings.Index(after, " effort"); ep >= 0 {
+						e := strings.TrimSpace(after[:ep])
+						if e != "" {
+							effort = e
+						}
+					}
+					modelPart = remainder[:wp]
+				}
+
+				modelName := strings.TrimSpace(modelPart)
+				modelName = strings.TrimSuffix(modelName, "(default)")
+				modelName = strings.TrimSpace(modelName)
+				modelName = strings.TrimSuffix(modelName, "(1M context)")
+				modelName = strings.TrimSpace(modelName)
+				modelName = strings.TrimSuffix(modelName, "(200k context)")
+				modelName = strings.TrimSpace(modelName)
+
+				if id, ok := modelIDFromDisplayName(modelName); ok {
+					model = id
+				}
+			}
+		}
+	}
+
+	return parsedInfo{
+		inputTokens: totalInput, outputTokens: totalOutput,
+		model: model, effort: effort, cwd: cwd,
+		lastActivity: lastActivity, fileSize: fileSize,
+	}
+}
+
+func stripANSI(s string) string {
+	var result strings.Builder
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '\x1b' {
+			for i < len(runes) && runes[i] != 'm' {
+				i++
+			}
+		} else if runes[i] == '\\' && i+5 < len(runes) {
+			rest := string(runes[i+1 : i+6])
+			if rest == "u001b" || rest == "u001B" {
+				i += 5
+				for i < len(runes) && runes[i] != 'm' {
+					i++
+				}
+			} else {
+				result.WriteRune(runes[i])
+			}
+		} else {
+			result.WriteRune(runes[i])
+		}
+	}
+	return result.String()
+}
+
+// --- Session discovery ---
+
+func discoverSessions(prevSessions map[string]*Session) []*Session {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	claudeDir := filepath.Join(home, ".claude", "projects")
+	if _, err := os.Stat(claudeDir); err != nil {
+		return nil
+	}
+
+	// Phase A: parallel tmux list-panes + pid/session map + children map
+	var paneLines string
+	var pidSessionMap map[int]sessionFileInfo
+	var childrenMap map[int][]int
+
+	var wgA sync.WaitGroup
+	wgA.Add(3)
+	go func() {
+		defer wgA.Done()
+		out, err := exec.Command("tmux", "list-panes", "-a", "-F",
+			"#{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}").Output()
+		if err == nil {
+			paneLines = string(out)
+		}
+	}()
+	go func() {
+		defer wgA.Done()
+		pidSessionMap = readPIDSessionMap()
+	}()
+	go func() {
+		defer wgA.Done()
+		childrenMap = buildChildrenMap()
+	}()
+	wgA.Wait()
+
+	claudePanes, sessionNames := processPaneLines(paneLines, childrenMap)
+	liveMap := buildLiveMapFromPanes(claudePanes, pidSessionMap)
+
+	var claudeTargets []string
+	for _, live := range liveMap {
+		claudeTargets = append(claudeTargets, live.paneTarget)
+	}
+
+	// Phase B: capture panes + read env in parallel
+	var paneContents map[string]string
+	var tmuxEnv map[string]map[string]string
+
+	var wgB sync.WaitGroup
+	wgB.Add(2)
+	go func() {
+		defer wgB.Done()
+		paneContents = capturePanesByTarget(claudeTargets)
+	}()
+	go func() {
+		defer wgB.Done()
+		tmuxEnv = readEnvForSessions(sessionNames)
+	}()
+	wgB.Wait()
+
+	// Phase 1: collect matched JSONL paths
+	candidates := make(map[string][2]string) // session_id -> [jsonl_path, project_dir]
+	entries, err := os.ReadDir(claudeDir)
+	if err != nil {
+		return nil
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		projectDir := filepath.Join(claudeDir, entry.Name())
+		files, err := os.ReadDir(projectDir)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			if file.IsDir() || filepath.Ext(file.Name()) != ".jsonl" {
+				continue
+			}
+			sessionID := strings.TrimSuffix(file.Name(), ".jsonl")
+			if _, ok := liveMap[sessionID]; !ok {
+				continue
+			}
+			path := filepath.Join(projectDir, file.Name())
+			if existing, ok := candidates[sessionID]; ok {
+				existingInfo, _ := os.Stat(existing[0])
+				newInfo, _ := os.Stat(path)
+				if existingInfo != nil && newInfo != nil && newInfo.Size() <= existingInfo.Size() {
+					continue
+				}
+			}
+			candidates[sessionID] = [2]string{path, projectDir}
+		}
+	}
+
+	// Phase 2: process matched sessions in parallel
+	type sessionResult struct {
+		session *Session
+	}
+	candidateList := make([][3]string, 0, len(candidates))
+	for sid, paths := range candidates {
+		candidateList = append(candidateList, [3]string{sid, paths[0], paths[1]})
+	}
+
+	results := make([]*Session, len(candidateList))
+	var wg2 sync.WaitGroup
+	for i, c := range candidateList {
+		wg2.Add(1)
+		go func(idx int, sessionID, path, projectDir string) {
+			defer wg2.Done()
+			live := liveMap[sessionID]
+			prev := prevSessions[sessionID]
+
+			var prevSize, prevIn, prevOut uint64
+			var prevModel, prevEffort, prevAct string
+			if prev != nil {
+				prevSize = prev.LastFileSize
+				prevIn = prev.TotalInputTokens
+				prevOut = prev.TotalOutputTokens
+				prevModel = prev.Model
+				prevEffort = prev.Effort
+				prevAct = prev.LastActivity
+			}
+
+			info := parseJSONL(path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct)
+			cwd := info.cwd
+			if cwd == "" && prev != nil {
+				cwd = prev.CWD
+			}
+			if cwd == "" {
+				cwd = decodeProjectPath(projectDir)
+			}
+
+			projName, relDir, branch := gitProjectInfo(cwd)
+			rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
+			status := debounceStatus(sessionID, rawStatus)
+			saveSessionName(sessionID, live.tmuxSession)
+			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
+			subagentCount := countSubagents(path)
+
+			results[idx] = &Session{
+				SessionID:         sessionID,
+				ProjectName:       projName,
+				Branch:            branch,
+				CWD:               cwd,
+				RelativeDir:       relDir,
+				TmuxSession:       live.tmuxSession,
+				PaneTarget:        live.paneTarget,
+				Model:             info.model,
+				Effort:            info.effort,
+				TotalInputTokens:  info.inputTokens,
+				TotalOutputTokens: info.outputTokens,
+				Status:            status,
+				PID:               live.pid,
+				LastActivity:      info.lastActivity,
+				StartedAt:         live.startedAt,
+				JSONLPath:         path,
+				LastFileSize:      info.fileSize,
+				Tags:              tags,
+				SubagentCount:     subagentCount,
+			}
+		}(i, c[0], c[1], c[2])
+	}
+	wg2.Wait()
+
+	var sessions []*Session
+	for _, s := range results {
+		if s != nil {
+			sessions = append(sessions, s)
+		}
+	}
+
+	// Handle unmatched live sessions
+	knownPIDs := make(map[int]bool)
+	for _, s := range sessions {
+		if s.PID != 0 {
+			knownPIDs[s.PID] = true
+		}
+	}
+
+	type unmatchedEntry struct {
+		sessionID string
+		live      *liveSessionInfo
+	}
+	var unmatched []unmatchedEntry
+	for sid, live := range liveMap {
+		if !knownPIDs[live.pid] {
+			unmatched = append(unmatched, unmatchedEntry{sid, live})
+		}
+	}
+
+	unmatchedResults := make([]*Session, len(unmatched))
+	var wg3 sync.WaitGroup
+	for i, u := range unmatched {
+		wg3.Add(1)
+		go func(idx int, sessionID string, live *liveSessionInfo) {
+			defer wg3.Done()
+
+			var resolvedPath string
+			if !strings.HasPrefix(sessionID, "tmux-") {
+				if prev, ok := prevSessions[sessionID]; ok && prev.JSONLPath != "" {
+					resolvedPath = prev.JSONLPath
+				}
+				if resolvedPath == "" {
+					resolvedPath = findJSONLForResumedSession(tmuxEnv, live.tmuxSession, live.pid)
+				}
+			}
+
+			if resolvedPath != "" {
+				prev := prevSessions[sessionID]
+				var prevSize, prevIn, prevOut uint64
+				var prevModel, prevEffort, prevAct string
+				if prev != nil {
+					prevSize = prev.LastFileSize
+					prevIn = prev.TotalInputTokens
+					prevOut = prev.TotalOutputTokens
+					prevModel = prev.Model
+					prevEffort = prev.Effort
+					prevAct = prev.LastActivity
+				}
+
+				info := parseJSONL(resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct)
+				cwd := info.cwd
+				if cwd == "" {
+					cwd = live.paneCWD
+				}
+				projName, relDir, branch := gitProjectInfo(cwd)
+				rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
+				status := debounceStatus(sessionID, rawStatus)
+				saveSessionName(sessionID, live.tmuxSession)
+				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
+				subagentCount := countSubagents(resolvedPath)
+
+				unmatchedResults[idx] = &Session{
+					SessionID:         sessionID,
+					ProjectName:       projName,
+					Branch:            branch,
+					CWD:               cwd,
+					RelativeDir:       relDir,
+					TmuxSession:       live.tmuxSession,
+					PaneTarget:        live.paneTarget,
+					Model:             info.model,
+					Effort:            info.effort,
+					TotalInputTokens:  info.inputTokens,
+					TotalOutputTokens: info.outputTokens,
+					Status:            status,
+					PID:               live.pid,
+					LastActivity:      info.lastActivity,
+					StartedAt:         live.startedAt,
+					JSONLPath:         resolvedPath,
+					LastFileSize:      info.fileSize,
+					Tags:              tags,
+					SubagentCount:     subagentCount,
+				}
+			} else {
+				saveSessionName(sessionID, live.tmuxSession)
+				projName, relDir, branch := gitProjectInfo(live.paneCWD)
+				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
+
+				unmatchedResults[idx] = &Session{
+					SessionID:   sessionID,
+					ProjectName: projName,
+					Branch:      branch,
+					CWD:         live.paneCWD,
+					RelativeDir: relDir,
+					TmuxSession: live.tmuxSession,
+					PaneTarget:  live.paneTarget,
+					Status:      StatusNew,
+					PID:         live.pid,
+					StartedAt:   live.startedAt,
+					Tags:        tags,
+				}
+			}
+		}(i, u.sessionID, u.live)
+	}
+	wg3.Wait()
+
+	for _, s := range unmatchedResults {
+		if s != nil {
+			sessions = append(sessions, s)
+		}
+	}
+
+	sort.Slice(sessions, func(i, j int) bool {
+		ai := truncateToMinute(sessions[i].LastActivity)
+		aj := truncateToMinute(sessions[j].LastActivity)
+		if ai != aj {
+			return ai > aj
+		}
+		return sessions[i].StartedAt > sessions[j].StartedAt
+	})
+
+	return sessions
+}
+
+func truncateToMinute(ts string) string {
+	if len(ts) >= 16 {
+		return ts[:16]
+	}
+	return ts
+}
+
+// --- PID session map ---
+
+func readPIDSessionMap() map[int]sessionFileInfo {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	dir := filepath.Join(home, ".claude", "sessions")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	m := make(map[int]sessionFileInfo)
+	for _, entry := range entries {
+		if filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		var v map[string]interface{}
+		if json.Unmarshal(data, &v) != nil {
+			continue
+		}
+		pidF, pidOK := v["pid"].(float64)
+		sid, sidOK := v["sessionId"].(string)
+		if !pidOK || !sidOK {
+			continue
+		}
+		startedAt := uint64(0)
+		if sa, ok := v["startedAt"].(float64); ok {
+			startedAt = uint64(sa)
+		}
+		m[int(pidF)] = sessionFileInfo{sessionID: sid, startedAt: startedAt}
+	}
+	return m
+}
+
+func buildChildrenMap() map[int][]int {
+	out, err := exec.Command("ps", "-eo", "pid,ppid").Output()
+	if err != nil {
+		return nil
+	}
+	m := make(map[int][]int)
+	for _, line := range strings.Split(string(out), "\n")[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err1 := strconv.Atoi(fields[0])
+		ppid, err2 := strconv.Atoi(fields[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		m[ppid] = append(m[ppid], pid)
+	}
+	return m
+}
+
+func processPaneLines(paneOutput string, childrenMap map[int][]int) (claudePanes [][4]string, sessionNames []string) {
+	home, _ := os.UserHomeDir()
+	sessionsDir := filepath.Join(home, ".claude", "sessions")
+	nameSet := make(map[string]bool)
+
+	for _, line := range strings.Split(strings.TrimSpace(paneOutput), "\n") {
+		parts := strings.SplitN(line, "|||", 6)
+		if len(parts) < 6 {
+			continue
+		}
+		pid, err := strconv.Atoi(parts[0])
+		if err != nil {
+			continue
+		}
+		sessionName := parts[1]
+		command := parts[2]
+		panePath := parts[3]
+		windowIdx := parts[4]
+		paneIdx := parts[5]
+
+		nameSet[sessionName] = true
+
+		firstChar := ' '
+		if len(command) > 0 {
+			firstChar = rune(command[0])
+		}
+		isClaude := (firstChar >= '0' && firstChar <= '9') ||
+			command == "claude" || command == "claude.exe" || command == "node"
+
+		checkPID := func(p int) int {
+			if fileExists(filepath.Join(sessionsDir, fmt.Sprintf("%d.json", p))) {
+				return p
+			}
+			return findClaudeChildPID(p, sessionsDir, childrenMap)
+		}
+
+		paneTarget := fmt.Sprintf("%s:%s.%s", sessionName, windowIdx, paneIdx)
+
+		if isClaude {
+			if cpid := checkPID(pid); cpid > 0 {
+				claudePanes = append(claudePanes, [4]string{
+					strconv.Itoa(cpid), sessionName, paneTarget, panePath,
+				})
+			}
+		} else if command == "bash" || command == "sh" || command == "zsh" {
+			if cpid := findClaudeChildPID(pid, sessionsDir, childrenMap); cpid > 0 {
+				claudePanes = append(claudePanes, [4]string{
+					strconv.Itoa(cpid), sessionName, paneTarget, panePath,
+				})
+			}
+		}
+	}
+
+	for name := range nameSet {
+		sessionNames = append(sessionNames, name)
+	}
+	return
+}
+
+func buildLiveMapFromPanes(claudePanes [][4]string, pidSessionMap map[int]sessionFileInfo) map[string]*liveSessionInfo {
+	m := make(map[string]*liveSessionInfo)
+	for _, pane := range claudePanes {
+		pid, _ := strconv.Atoi(pane[0])
+		tmuxSession := pane[1]
+		paneTarget := pane[2]
+		paneCWD := pane[3]
+
+		if info, ok := pidSessionMap[pid]; ok {
+			m[info.sessionID] = &liveSessionInfo{
+				pid: pid, tmuxSession: tmuxSession,
+				paneTarget: paneTarget, paneCWD: paneCWD,
+				startedAt: info.startedAt,
+			}
+		} else {
+			key := fmt.Sprintf("tmux-%s", paneTarget)
+			m[key] = &liveSessionInfo{
+				pid: pid, tmuxSession: tmuxSession,
+				paneTarget: paneTarget, paneCWD: paneCWD,
+			}
+		}
+	}
+	return m
+}
+
+func capturePanesByTarget(targets []string) map[string]string {
+	type result struct {
+		target  string
+		content string
+	}
+	ch := make(chan result, len(targets))
+	var wg sync.WaitGroup
+	for _, t := range targets {
+		wg.Add(1)
+		go func(target string) {
+			defer wg.Done()
+			out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p").Output()
+			if err == nil {
+				ch <- result{target, string(out)}
+			}
+		}(t)
+	}
+	wg.Wait()
+	close(ch)
+
+	m := make(map[string]string)
+	for r := range ch {
+		m[r.target] = r.content
+	}
+	return m
+}
+
+func readEnvForSessions(sessionNames []string) map[string]map[string]string {
+	type result struct {
+		name string
+		vars map[string]string
+	}
+	ch := make(chan result, len(sessionNames))
+	var wg sync.WaitGroup
+	for _, name := range sessionNames {
+		wg.Add(1)
+		go func(n string) {
+			defer wg.Done()
+			out, err := exec.Command("tmux", "show-environment", "-t", n).Output()
+			if err != nil {
+				return
+			}
+			vars := make(map[string]string)
+			for _, line := range strings.Split(string(out), "\n") {
+				if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+					vars[k] = v
+				}
+			}
+			ch <- result{n, vars}
+		}(name)
+	}
+	wg.Wait()
+	close(ch)
+
+	m := make(map[string]map[string]string)
+	for r := range ch {
+		m[r.name] = r.vars
+	}
+	return m
+}
+
+func findClaudeChildPID(parentPID int, sessionsDir string, childrenMap map[int][]int) int {
+	queue := []int{parentPID}
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+		if kids, ok := childrenMap[pid]; ok {
+			for _, child := range kids {
+				if fileExists(filepath.Join(sessionsDir, fmt.Sprintf("%d.json", child))) {
+					return child
+				}
+				queue = append(queue, child)
+			}
+		}
+	}
+	return 0
+}
+
+func determineStatus(inputTokens, outputTokens uint64, paneTarget string, paneContents map[string]string) SessionStatus {
+	if paneTarget != "" {
+		content := paneContents[paneTarget]
+		pane := paneStatusFromContent(content)
+		if inputTokens == 0 && outputTokens == 0 && pane == StatusIdle {
+			return StatusNew
+		}
+		return pane
+	}
+	if inputTokens == 0 && outputTokens == 0 {
+		return StatusNew
+	}
+	return StatusIdle
+}
+
+func paneStatusFromContent(content string) SessionStatus {
+	lines := strings.Split(content, "\n")
+	linesChecked := 0
+
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+
+		if linesChecked == 0 && strings.Contains(trimmed, "Esc to cancel") {
+			return StatusInput
+		}
+
+		runes := []rune(trimmed)
+		if len(runes) > 0 && isSpinner(runes[0]) && strings.Contains(trimmed, "…") {
+			return StatusWorking
+		}
+
+		if idx := strings.Index(trimmed, "❯"); idx >= 0 {
+			after := strings.TrimSpace(trimmed[idx+len("❯"):])
+			if len(after) > 0 && after[0] >= '0' && after[0] <= '9' {
+				return StatusInput
+			}
+		}
+
+		linesChecked++
+		if linesChecked >= 10 {
+			break
+		}
+	}
+	return StatusIdle
+}
+
+func isSpinner(c rune) bool {
+	return (c >= '✠' && c <= '❧') || c == '⏺' || c == '·'
+}
+
+func countSubagents(jsonlPath string) int {
+	sessionID := strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl")
+	subagentDir := filepath.Join(filepath.Dir(jsonlPath), sessionID)
+	entries, err := os.ReadDir(subagentDir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) != ".jsonl" {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) < 5*time.Minute {
+			count++
+		}
+	}
+	return count
+}
+
+func reconSessionsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".recon", "sessions")
+}
+
+func saveSessionName(sessionID, tmuxName string) {
+	if strings.HasPrefix(sessionID, "tmux-") {
+		return
+	}
+	dir := reconSessionsDir()
+	if dir == "" {
+		return
+	}
+	path := filepath.Join(dir, sessionID)
+	if fileExists(path) {
+		return
+	}
+	os.MkdirAll(dir, 0o755)
+	os.WriteFile(path, []byte(tmuxName), 0o644)
+}
+
+func loadSessionName(sessionID string) string {
+	dir := reconSessionsDir()
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, sessionID))
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(data))
+	return s
+}
+
+func readTmuxTagsFrom(env map[string]map[string]string, sessionName string) map[string]string {
+	tags := make(map[string]string)
+	vars, ok := env[sessionName]
+	if !ok {
+		return tags
+	}
+	val, ok := vars["RECON_TAGS"]
+	if !ok {
+		return tags
+	}
+	for _, tag := range strings.Split(val, ",") {
+		if k, v, ok := strings.Cut(tag, ":"); ok {
+			tags[k] = v
+		}
+	}
+	return tags
+}
+
+func findJSONLForResumedSession(env map[string]map[string]string, tmuxSession string, pid int) string {
+	origID := readEnvFromBatch(env, tmuxSession, "RECON_RESUMED_FROM")
+	if origID == "" {
+		origID = parseResumeIDFromPS(pid)
+	}
+	if origID == "" {
+		return ""
+	}
+	return findJSONLBySessionID(origID)
+}
+
+func readEnvFromBatch(env map[string]map[string]string, sessionName, varName string) string {
+	if vars, ok := env[sessionName]; ok {
+		return vars[varName]
+	}
+	return ""
+}
+
+func parseResumeIDFromPS(pid int) string {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	for i, f := range fields {
+		if f == "--resume" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
+}
+
+func findJSONLBySessionID(sessionID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	projectsDir := filepath.Join(home, ".claude", "projects")
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return ""
+	}
+	var bestPath string
+	var bestSize int64
+	for _, entry := range entries {
+		candidate := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
+		info, err := os.Stat(candidate)
+		if err != nil {
+			continue
+		}
+		if info.Size() > bestSize {
+			bestPath = candidate
+			bestSize = info.Size()
+		}
+	}
+	return bestPath
+}
+
+func findSessionCWD(sessionID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	projectsDir := filepath.Join(home, ".claude", "projects")
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		jsonlPath := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
+		f, err := os.Open(jsonlPath)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		for i := 0; i < 20 && scanner.Scan(); i++ {
+			var v map[string]interface{}
+			if json.Unmarshal([]byte(scanner.Text()), &v) == nil {
+				if cwd, ok := v["cwd"].(string); ok {
+					f.Close()
+					return cwd
+				}
+			}
+		}
+		f.Close()
+	}
+	return ""
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}

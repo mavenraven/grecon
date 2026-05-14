@@ -13,29 +13,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          go-version: stable
 
       - name: Build (arm64)
-        run: cargo build --release --target aarch64-apple-darwin
+        run: GOARCH=arm64 GOOS=darwin go build -o grecon-darwin-arm64 .
 
       - name: Build (x86_64)
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: Create universal binary
-        run: |
-          lipo -create \
-            target/aarch64-apple-darwin/release/recon \
-            target/x86_64-apple-darwin/release/recon \
-            -output recon-macos
-          chmod +x recon-macos
+        run: GOARCH=amd64 GOOS=darwin go build -o grecon-darwin-amd64 .
 
       - name: Publish release
         run: |
+          chmod +x grecon-darwin-arm64 grecon-darwin-amd64
           SHORT_SHA="${GITHUB_SHA::7}"
-          gh release create "${SHORT_SHA}" recon-macos \
-            --title "recon ${SHORT_SHA}" \
+          gh release create "${SHORT_SHA}" grecon-darwin-arm64 grecon-darwin-amd64 \
+            --title "grecon ${SHORT_SHA}" \
             --notes "Built from \`${GITHUB_SHA}\` on $(date -u +%Y-%m-%d)" \
             --latest
         env:
