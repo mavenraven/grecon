@@ -316,6 +316,9 @@ func RunTUI() error {
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err = p.Run()
+	if err != nil && strings.Contains(err.Error(), "resource temporarily unavailable") {
+		return nil
+	}
 	return err
 }
 
