@@ -74,14 +74,19 @@ func (a *App) TryReceive() {
 	}
 }
 
-func (a *App) Refresh() {
-	a.Sessions = server.RequireFetch()
+func (a *App) Refresh() error {
+	sessions, err := server.RequireFetch()
+	if err != nil {
+		return err
+	}
+	a.Sessions = sessions
 	count := len(a.FilteredIndices())
 	if count == 0 {
 		a.Selected = 0
 	} else if a.Selected >= count {
 		a.Selected = count - 1
 	}
+	return nil
 }
 
 func (a *App) AdvanceTick() {

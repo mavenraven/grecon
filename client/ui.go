@@ -37,11 +37,13 @@ type tuiModel struct {
 	height int
 }
 
-func newTUIModel() tuiModel {
+func newTUIModel() (tuiModel, error) {
 	app := NewApp()
-	app.Refresh()
+	if err := app.Refresh(); err != nil {
+		return tuiModel{}, err
+	}
 	app.StartBackgroundRefresh()
-	return tuiModel{app: app, width: 80, height: 24}
+	return tuiModel{app: app, width: 80, height: 24}, nil
 }
 
 func (m tuiModel) Init() tea.Cmd {
@@ -308,9 +310,12 @@ func renderFooter(b *strings.Builder, app *App, width int) {
 }
 
 func RunTUI() error {
-	m := newTUIModel()
+	m, err := newTUIModel()
+	if err != nil {
+		return err
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 

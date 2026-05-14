@@ -30,7 +30,10 @@ func parkFilePath() string {
 
 func Park() {
 	app := NewApp()
-	app.Refresh()
+	if err := app.Refresh(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
 
 	var parked []parkedSession
 	for _, s := range app.Sessions {

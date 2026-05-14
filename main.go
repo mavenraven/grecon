@@ -112,15 +112,18 @@ func main() {
 	nextCmd := &cobra.Command{
 		Use:   "next",
 		Short: "Jump to the next agent waiting for input",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			app := client.NewApp()
-			app.Refresh()
+			if err := app.Refresh(); err != nil {
+				return err
+			}
 			for _, s := range app.Sessions {
 				if s.Status == server.StatusInput && s.PaneTarget != "" {
 					client.SwitchToPane(s.PaneTarget)
-					return
+					return nil
 				}
 			}
+			return nil
 		},
 	}
 
@@ -128,10 +131,13 @@ func main() {
 	jsonCmd := &cobra.Command{
 		Use:   "json",
 		Short: "Print all session state as JSON",
-		Run: func(cmd *cobra.Command, args []string) {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			app := client.NewApp()
-			app.Refresh()
+			if err := app.Refresh(); err != nil {
+				return err
+			}
 			fmt.Println(app.ToJSON(jsonTags))
+			return nil
 		},
 	}
 	jsonCmd.Flags().StringSliceVar(&jsonTags, "tag", nil, "Filter by tag (key:value)")

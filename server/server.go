@@ -143,12 +143,10 @@ func TryFetch() []*Session {
 	return sessions
 }
 
-func RequireFetch() []*Session {
+func RequireFetch() ([]*Session, error) {
 	sessions := TryFetch()
 	if sessions != nil {
-		return sessions
+		return sessions, nil
 	}
-	fmt.Fprintln(os.Stderr, "grecon server is not running. Start it with: grecon server")
-	os.Exit(1)
-	return nil
+	return nil, fmt.Errorf("grecon server is not running. Start it with: grecon server")
 }
