@@ -62,6 +62,11 @@ func RunServer() {
 	fmt.Fprintf(os.Stderr, "grecon server listening on %s\n", path)
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "PANIC in poll goroutine: %v\n", r)
+			}
+		}()
 		prev := prevSessions
 		pollCount := uint64(0)
 		for {
