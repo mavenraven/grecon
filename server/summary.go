@@ -41,13 +41,6 @@ func AttachSummaries(sessions []*Session) {
 		}
 
 		activity := extractRecentActivity(s.JSONLPath)
-		if activity == "" {
-			globalSummary.mu.Lock()
-			s.Summary = globalSummary.summaries[s.SessionID]
-			globalSummary.mu.Unlock()
-			continue
-		}
-
 		hash := hashEntry(activity)
 
 		globalSummary.mu.Lock()
@@ -56,13 +49,17 @@ func AttachSummaries(sessions []*Session) {
 		s.Summary = globalSummary.summaries[s.SessionID]
 
 		if hash != oldHash && !isPending {
-			globalSummary.pending[s.SessionID] = true
 			globalSummary.hashes[s.SessionID] = hash
-			globalSummary.summaries[s.SessionID] = ""
-			s.Summary = ""
-			globalSummary.mu.Unlock()
 
-			go generateSummary(s.SessionID, activity)
+			if activity == "" {
+				globalSummary.summaries[s.SessionID] = ""
+				s.Summary = ""
+				globalSummary.mu.Unlock()
+			} else {
+				globalSummary.pending[s.SessionID] = true
+				globalSummary.mu.Unlock()
+				go generateSummary(s.SessionID, activity)
+			}
 		} else {
 			globalSummary.mu.Unlock()
 		}
@@ -120,10 +117,14 @@ func extractRecentActivity(path string) string {
 	lastUserIdx := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line != "" && strings.Contains(line, `"type":"user"`) {
-			lastUserIdx = i
-			break
+		if line == "" || !strings.Contains(line, `"type":"user"`) {
+			continue
 		}
+		if strings.Contains(line, `"tool_result"`) {
+			continue
+		}
+		lastUserIdx = i
+		break
 	}
 
 	if lastUserIdx < 0 {
