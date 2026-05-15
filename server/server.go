@@ -63,6 +63,30 @@ func RunServer() {
 
 	fmt.Fprintf(os.Stderr, "grecon server listening on %s\n", path)
 
+	broadcast := func(sessions []*Session) {
+		for _, s := range sessions {
+			if status, ok := pw.GetStatus(s.TmuxSession); ok {
+				s.Status = debounceStatus(s.SessionID, status)
+			}
+		}
+
+		newData := SerializeSessions(sessions)
+
+		mu.Lock()
+		data = newData
+		var alive []net.Conn
+		for _, conn := range subs {
+			conn.SetWriteDeadline(time.Now().Add(time.Second))
+			if _, err := conn.Write(newData); err != nil {
+				conn.Close()
+			} else {
+				alive = append(alive, conn)
+			}
+		}
+		subs = alive
+		mu.Unlock()
+	}
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -71,14 +95,16 @@ func RunServer() {
 		}()
 		sessions := initial
 		pollCount := uint64(0)
-		discoverTick := 0
-		const discoverInterval = 5
-		for {
-			pollCount++
-			discoverTick++
+		discoverTicker := time.NewTicker(500 * time.Millisecond)
+		defer discoverTicker.Stop()
 
-			if discoverTick >= discoverInterval {
-				discoverTick = 0
+		for {
+			select {
+			case <-pw.Notify():
+				broadcast(sessions)
+
+			case <-discoverTicker.C:
+				pollCount++
 				pollStart := time.Now()
 				sessions = discoverTmuxSessions(prev)
 				pollMs := time.Since(pollStart).Milliseconds()
@@ -93,31 +119,9 @@ func RunServer() {
 
 				fmt.Printf("poll #%d: discover=%dms sessions=%d\n",
 					pollCount, pollMs, len(sessions))
+
+				broadcast(sessions)
 			}
-
-			for _, s := range sessions {
-				if status, ok := pw.GetStatus(s.TmuxSession); ok {
-					s.Status = debounceStatus(s.SessionID, status)
-				}
-			}
-
-			newData := SerializeSessions(sessions)
-
-			mu.Lock()
-			data = newData
-			var alive []net.Conn
-			for _, conn := range subs {
-				conn.SetWriteDeadline(time.Now().Add(time.Second))
-				if _, err := conn.Write(newData); err != nil {
-					conn.Close()
-				} else {
-					alive = append(alive, conn)
-				}
-			}
-			subs = alive
-			mu.Unlock()
-
-			time.Sleep(100 * time.Millisecond)
 		}
 	}()
 

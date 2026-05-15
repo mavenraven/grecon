@@ -16,6 +16,7 @@ type PaneWatcher struct {
 	buffers  map[string]*ringBuffer
 	statuses map[string]SessionStatus
 	clients  map[string]*exec.Cmd
+	notify   chan struct{}
 }
 
 type ringBuffer struct {
@@ -29,7 +30,12 @@ func NewPaneWatcher() *PaneWatcher {
 		buffers:  make(map[string]*ringBuffer),
 		statuses: make(map[string]SessionStatus),
 		clients:  make(map[string]*exec.Cmd),
+		notify:   make(chan struct{}, 1),
 	}
+}
+
+func (pw *PaneWatcher) Notify() <-chan struct{} {
+	return pw.notify
 }
 
 func newRingBuffer(size int) *ringBuffer {
@@ -143,8 +149,17 @@ func (pw *PaneWatcher) handleOutput(sessionName, line string) {
 	}
 	buf.Write([]byte(data))
 	content := buf.String()
-	pw.statuses[sessionName] = paneStatusFromContent(content)
+	newStatus := paneStatusFromContent(content)
+	changed := pw.statuses[sessionName] != newStatus
+	pw.statuses[sessionName] = newStatus
 	pw.mu.Unlock()
+
+	if changed {
+		select {
+		case pw.notify <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func unescapeControlMode(s string) string {
