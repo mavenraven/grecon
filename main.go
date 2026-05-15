@@ -151,23 +151,7 @@ func main() {
 		},
 	}
 
-	parkCmd := &cobra.Command{
-		Use:   "park",
-		Short: "Save all live sessions to disk for restoring later",
-		Run: func(cmd *cobra.Command, args []string) {
-			client.Park()
-		},
-	}
-
-	unparkCmd := &cobra.Command{
-		Use:   "unpark",
-		Short: "Restore previously parked sessions",
-		Run: func(cmd *cobra.Command, args []string) {
-			client.Unpark()
-		},
-	}
-
-	rootCmd.AddCommand(newCmd, launchCmd, resumeCmd, nextCmd, jsonCmd, serverCmd, parkCmd, unparkCmd)
+	rootCmd.AddCommand(newCmd, launchCmd, resumeCmd, nextCmd, jsonCmd, serverCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
