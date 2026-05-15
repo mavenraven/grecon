@@ -739,7 +739,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					resolvedPath = prev.JSONLPath
 				}
 				if resolvedPath == "" {
-					resolvedPath = findJSONLForResumedSession(tmuxEnv, live.tmuxSession, live.pid)
+					resolvedPath = findJSONLForResumedSession(live.pid)
 				}
 			}
 
@@ -1261,11 +1261,8 @@ func readTmuxTagsFrom(env map[string]map[string]string, sessionName string) map[
 	return tags
 }
 
-func findJSONLForResumedSession(env map[string]map[string]string, tmuxSession string, pid int) string {
-	origID := readEnvFromBatch(env, tmuxSession, "RECON_RESUMED_FROM")
-	if origID == "" {
-		origID = parseResumeIDFromPS(pid)
-	}
+func findJSONLForResumedSession(pid int) string {
+	origID := parseResumeIDFromPS(pid)
 	if origID == "" {
 		return ""
 	}
