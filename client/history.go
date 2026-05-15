@@ -347,7 +347,8 @@ func (m resumeModel) View() string {
 	innerW := w - 2
 
 	colNum := 4
-	colName := 28
+	colTmux := 16
+	colClaude := 18
 	colModel := 12
 	colContext := 14
 	colActivity := 14
@@ -364,7 +365,7 @@ func (m resumeModel) View() string {
 		}
 	}
 	gitColWidth += 2
-	remaining := innerW - colNum - colName - colModel - colContext - colActivity
+	remaining := innerW - colNum - colTmux - colClaude - colModel - colContext - colActivity
 	if gitColWidth > remaining {
 		gitColWidth = remaining
 	}
@@ -397,7 +398,8 @@ func (m resumeModel) View() string {
 	} else {
 		header := buildRow([]colSpec{
 			{colNum, " # "},
-			{colName, "Session"},
+			{colTmux, "Tmux"},
+			{colClaude, "Claude"},
 			{gitColWidth, "Git(Project::Branch)"},
 			{colModel, "Model"},
 			{colContext, "Context"},
@@ -416,18 +418,17 @@ func (m resumeModel) View() string {
 			if i >= maxRows {
 				break
 			}
-			claudeName := server.LoadClaudeName(e.SessionID)
 			tmuxName := server.LoadTmuxName(e.SessionID)
-			name := claudeName
-			if name == "" {
-				name = tmuxName
+			if tmuxName == "" {
+				tmuxName = dimStyle.Render("—")
 			}
-			if name == "" {
-				if len(e.SessionID) > 8 {
-					name = e.SessionID[:8]
-				} else {
-					name = e.SessionID
+			claudeName := server.LoadClaudeName(e.SessionID)
+			if claudeName == "" {
+				sid := e.SessionID
+				if len(sid) > 8 {
+					sid = sid[:8]
 				}
+				claudeName = dimStyle.Render(sid)
 			}
 
 			project := dirName(e.CWD)
@@ -449,7 +450,8 @@ func (m resumeModel) View() string {
 			lastActive := formatRelative(e.LastActive)
 
 			row := padCol(fmt.Sprintf(" %d ", i+1), colNum) +
-				padCol(name, colName) +
+				padCol(tmuxName, colTmux) +
+				padCol(claudeName, colClaude) +
 				padCol(gitCol, gitColWidth) +
 				padCol(modelDisplay, colModel) +
 				padCol(tokens, colContext) +
