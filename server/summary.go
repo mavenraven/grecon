@@ -58,6 +58,8 @@ func AttachSummaries(sessions []*Session) {
 		if hash != oldHash && !isPending {
 			globalSummary.pending[s.SessionID] = true
 			globalSummary.hashes[s.SessionID] = hash
+			globalSummary.summaries[s.SessionID] = ""
+			s.Summary = ""
 			globalSummary.mu.Unlock()
 
 			go generateSummary(s.SessionID, activity)
