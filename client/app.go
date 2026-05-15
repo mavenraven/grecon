@@ -1,7 +1,6 @@
 package client
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -50,20 +49,13 @@ func NewApp() *App {
 }
 
 func (a *App) StartBackgroundRefresh() {
+	ch := server.Subscribe(a.stopChan)
 	go func() {
-		for {
-			sessions := server.TryFetch()
-			if sessions != nil {
-				a.mu.Lock()
-				a.latest = sessions
-				a.hasNew = true
-				a.mu.Unlock()
-			}
-			select {
-			case <-a.stopChan:
-				return
-			case <-time.After(500 * time.Millisecond):
-			}
+		for sessions := range ch {
+			a.mu.Lock()
+			a.latest = sessions
+			a.hasNew = true
+			a.mu.Unlock()
 		}
 	}()
 }
@@ -327,62 +319,6 @@ func (a *App) handleKeyFilter(code string, ctrl bool) {
 		a.FilterCursor++
 		a.clampSelection()
 	}
-}
-
-func (a *App) ToJSON(tagFilters []string) string {
-	type filter struct{ k, v string }
-	var filters []filter
-	for _, t := range tagFilters {
-		if k, v, ok := strings.Cut(t, ":"); ok {
-			filters = append(filters, filter{k, v})
-		}
-	}
-
-	var result []map[string]interface{}
-	for i, s := range a.Sessions {
-		match := true
-		for _, f := range filters {
-			if v, ok := s.Tags[f.k]; !ok || v != f.v {
-				match = false
-				break
-			}
-		}
-		if !match {
-			continue
-		}
-		result = append(result, map[string]interface{}{
-			"index":               i + 1,
-			"session_id":          s.SessionID,
-			"project_name":        s.ProjectName,
-			"branch":              s.Branch,
-			"cwd":                 s.CWD,
-			"room_id":             s.RoomID(),
-			"relative_dir":        s.RelativeDir,
-			"tmux_session":        s.TmuxSession,
-			"pane_target":         s.PaneTarget,
-			"model":               s.Model,
-			"model_display":       s.ModelDisplay(),
-			"total_input_tokens":  s.TotalInputTokens,
-			"total_output_tokens": s.TotalOutputTokens,
-			"context_display":     s.TokenDisplay(),
-			"token_ratio":         s.TokenRatio(),
-			"status":              s.Status.Label(),
-			"pid":                 s.PID,
-			"last_activity":       s.LastActivity,
-			"started_at":          s.StartedAt,
-			"tags":                s.Tags,
-			"claude_name":         s.ClaudeName,
-			"subagent_count":      s.SubagentCount,
-			"subagents":           s.Subagents,
-			"summary":             s.Summary,
-		})
-	}
-
-	out, err := json.MarshalIndent(map[string]interface{}{"sessions": result}, "", "  ")
-	if err != nil {
-		return "{}"
-	}
-	return string(out)
 }
 
 func ShortenHome(path string) string {

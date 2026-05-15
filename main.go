@@ -128,21 +128,6 @@ func main() {
 		},
 	}
 
-	var jsonTags []string
-	jsonCmd := &cobra.Command{
-		Use:   "json",
-		Short: "Print all session state as JSON",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			app := client.NewApp()
-			if err := app.Refresh(); err != nil {
-				return err
-			}
-			fmt.Println(app.ToJSON(jsonTags))
-			return nil
-		},
-	}
-	jsonCmd.Flags().StringSliceVar(&jsonTags, "tag", nil, "Filter by tag (key:value)")
-
 	serverCmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run a background server that caches session data",
@@ -151,7 +136,7 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(newCmd, launchCmd, resumeCmd, nextCmd, jsonCmd, serverCmd)
+	rootCmd.AddCommand(newCmd, launchCmd, resumeCmd, nextCmd, serverCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

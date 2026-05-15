@@ -52,6 +52,7 @@ func RunServer() {
 
 	var mu sync.Mutex
 	data := SerializeSessions(initial)
+	var subs []net.Conn
 
 	listener, err := net.Listen("unix", path)
 	if err != nil {
@@ -100,8 +101,20 @@ func RunServer() {
 				}
 			}
 
+			newData := SerializeSessions(sessions)
+
 			mu.Lock()
-			data = SerializeSessions(sessions)
+			data = newData
+			var alive []net.Conn
+			for _, conn := range subs {
+				conn.SetWriteDeadline(time.Now().Add(time.Second))
+				if _, err := conn.Write(newData); err != nil {
+					conn.Close()
+				} else {
+					alive = append(alive, conn)
+				}
+			}
+			subs = alive
 			mu.Unlock()
 
 			time.Sleep(100 * time.Millisecond)
@@ -113,17 +126,20 @@ func RunServer() {
 		if err != nil {
 			continue
 		}
-		t := time.Now()
 		mu.Lock()
 		snapshot := make([]byte, len(data))
 		copy(snapshot, data)
 		mu.Unlock()
-		lockUs := time.Since(t).Microseconds()
 
-		conn.Write(snapshot)
-		conn.Close()
-		totalUs := time.Since(t).Microseconds()
-		fmt.Printf("conn: lock=%dµs write=%dµs bytes=%d\n", lockUs, totalUs, len(snapshot))
+		conn.SetWriteDeadline(time.Now().Add(time.Second))
+		if _, err := conn.Write(snapshot); err != nil {
+			conn.Close()
+			continue
+		}
+
+		mu.Lock()
+		subs = append(subs, conn)
+		mu.Unlock()
 	}
 }
 
@@ -134,27 +150,7 @@ func TryFetch() []*Session {
 		return nil
 	}
 	defer conn.Close()
-	conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-
-	var lenBuf [4]byte
-	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
-		return nil
-	}
-	length := binary.BigEndian.Uint32(lenBuf[:])
-	if length == 0 || length > 10_000_000 {
-		return nil
-	}
-
-	buf := make([]byte, length)
-	if _, err := io.ReadFull(conn, buf); err != nil {
-		return nil
-	}
-
-	var sessions []*Session
-	if json.Unmarshal(buf, &sessions) != nil {
-		return nil
-	}
-	return sessions
+	return readFrame(conn, 500*time.Millisecond)
 }
 
 func RequireFetch() ([]*Session, error) {
@@ -163,6 +159,73 @@ func RequireFetch() ([]*Session, error) {
 		return sessions, nil
 	}
 	return nil, fmt.Errorf("grecon server is not running. Start it with: grecon server")
+}
+
+func Subscribe(stop <-chan struct{}) <-chan []*Session {
+	ch := make(chan []*Session, 1)
+	go func() {
+		defer close(ch)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			conn, err := net.DialTimeout("unix", SocketPath(), 500*time.Millisecond)
+			if err != nil {
+				select {
+				case <-stop:
+					return
+				case <-time.After(time.Second):
+					continue
+				}
+			}
+			readFramesLoop(conn, ch, stop)
+			conn.Close()
+		}
+	}()
+	return ch
+}
+
+func readFramesLoop(conn net.Conn, ch chan []*Session, stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		sessions := readFrame(conn, 5*time.Second)
+		if sessions == nil {
+			return
+		}
+		select {
+		case ch <- sessions:
+		default:
+			<-ch
+			ch <- sessions
+		}
+	}
+}
+
+func readFrame(conn net.Conn, deadline time.Duration) []*Session {
+	conn.SetReadDeadline(time.Now().Add(deadline))
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
+		return nil
+	}
+	length := binary.BigEndian.Uint32(lenBuf[:])
+	if length == 0 || length > 10_000_000 {
+		return nil
+	}
+	buf := make([]byte, length)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return nil
+	}
+	var sessions []*Session
+	if json.Unmarshal(buf, &sessions) != nil {
+		return nil
+	}
+	return sessions
 }
 
 func discoverTmuxSessions(prev map[string]*Session) []*Session {
