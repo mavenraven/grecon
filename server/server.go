@@ -66,7 +66,7 @@ func RunServer() {
 	broadcast := func(sessions []*Session) {
 		for _, s := range sessions {
 			if status, ok := pw.GetStatus(s.TmuxSession); ok {
-				s.Status = debounceStatus(s.SessionID, status)
+				s.Status = status
 			}
 		}
 

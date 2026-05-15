@@ -178,36 +178,6 @@ type parsedInfo struct {
 	fileSize     uint64
 }
 
-// --- Status debounce ---
-
-type statusHold struct {
-	status SessionStatus
-	since  time.Time
-}
-
-var (
-	statusDebounceMu  sync.Mutex
-	statusDebounceMap = make(map[string]statusHold)
-)
-
-const statusHoldSecs = 3
-
-func debounceStatus(sessionID string, raw SessionStatus) SessionStatus {
-	statusDebounceMu.Lock()
-	defer statusDebounceMu.Unlock()
-
-	now := time.Now()
-	if prev, ok := statusDebounceMap[sessionID]; ok {
-		if prev.status == StatusWorking && raw == StatusIdle {
-			if time.Since(prev.since).Seconds() < statusHoldSecs {
-				return StatusWorking
-			}
-		}
-	}
-	statusDebounceMap[sessionID] = statusHold{status: raw, since: now}
-	return raw
-}
-
 // --- Git cache ---
 
 type gitInfo struct {
@@ -667,7 +637,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 
 			projName, relDir, branch := gitProjectInfo(cwd)
 			rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
-			status := debounceStatus(sessionID, rawStatus)
+			status := rawStatus
 			SaveTmuxName(sessionID, live.tmuxSession)
 			saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
@@ -763,7 +733,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				}
 				projName, relDir, branch := gitProjectInfo(cwd)
 				rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
-				status := debounceStatus(sessionID, rawStatus)
+				status := rawStatus
 				SaveTmuxName(sessionID, live.tmuxSession)
 				saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
