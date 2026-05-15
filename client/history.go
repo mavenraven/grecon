@@ -206,7 +206,14 @@ func dirName(path string) string {
 }
 
 func deleteSession(sessionID, projectDir, cwd string) {
-	os.Remove(filepath.Join(projectDir, sessionID+".jsonl"))
+	jsonlPath := filepath.Join(projectDir, sessionID+".jsonl")
+
+	realCWD := readSessionCWD(jsonlPath)
+	if realCWD == "" {
+		realCWD = cwd
+	}
+
+	os.Remove(jsonlPath)
 	os.RemoveAll(filepath.Join(projectDir, sessionID))
 
 	if home, err := os.UserHomeDir(); err == nil {
@@ -220,11 +227,33 @@ func deleteSession(sessionID, projectDir, cwd string) {
 		os.Remove(filepath.Join(recon, "claude-names", sessionID))
 	}
 
-	if idx := strings.Index(cwd, "/.claude/worktrees/"); idx >= 0 {
-		repoRoot := cwd[:idx]
-		execRun("git", "-C", repoRoot, "worktree", "remove", "--force", cwd)
+	if idx := strings.Index(realCWD, "/.claude/worktrees/"); idx >= 0 {
+		repoRoot := realCWD[:idx]
+		execRun("git", "-C", repoRoot, "worktree", "remove", "--force", realCWD)
 		execRun("git", "-C", repoRoot, "worktree", "prune")
 	}
+}
+
+func readSessionCWD(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for i := 0; i < 20 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		if !strings.Contains(line, `"cwd"`) {
+			continue
+		}
+		var v map[string]interface{}
+		if json.Unmarshal([]byte(line), &v) == nil {
+			if cwd, ok := v["cwd"].(string); ok {
+				return cwd
+			}
+		}
+	}
+	return ""
 }
 
 func execRun(name string, args ...string) {
