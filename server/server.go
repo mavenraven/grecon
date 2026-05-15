@@ -49,6 +49,8 @@ func RunServer() {
 		prevSessions[s.SessionID] = s
 	}
 
+	AttachSummaries(sessions)
+
 	var mu sync.Mutex
 	data := SerializeSessions(sessions)
 
@@ -89,6 +91,8 @@ func RunServer() {
 			for _, s := range sessions {
 				prev[s.SessionID] = s
 			}
+
+			AttachSummaries(sessions)
 
 			mu.Lock()
 			data = SerializeSessions(sessions)

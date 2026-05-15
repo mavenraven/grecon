@@ -139,16 +139,12 @@ func (m tuiModel) View() string {
 func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	innerW := width - 2
 
-	colNum := 4
-	colSession := 24
+	colSession := 20
 	colDir := 20
 	colStatus := 10
-	colModel := 12
-	colContext := 14
-	colActivity := 14
-	colProject := innerW - colNum - colSession - colDir - colStatus - colModel - colContext - colActivity
-	if colProject < 20 {
-		colProject = 20
+	colSummary := innerW - colSession - colDir - colStatus
+	if colSummary < 20 {
+		colSummary = 20
 	}
 
 	title := " grecon — Claude Code Sessions "
@@ -162,14 +158,10 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	b.WriteString("\n")
 
 	header := buildRow([]colSpec{
-		{colNum, " # "},
-		{colSession, "Session"},
-		{colProject, "Project"},
+		{colSession, " Session"},
 		{colDir, "Directory"},
 		{colStatus, "Status"},
-		{colModel, "Model"},
-		{colContext, "Context"},
-		{colActivity, "Last Activity"},
+		{colSummary, "Summary"},
 	})
 	b.WriteString("│")
 	b.WriteString(headerStyle.Render(fitToWidth(header, innerW)))
@@ -186,23 +178,14 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 
 		needBg := di == app.Selected || s.Status == server.StatusInput
 
-		num := fmt.Sprintf(" %d ", realIdx+1)
 		tmuxName := s.TmuxSession
 		if tmuxName == "" {
 			tmuxName = "—"
 		}
 
-		sessionCol := tmuxName
+		sessionCol := " " + tmuxName
 		if s.SubagentCount > 0 {
-			sessionCol = truncPlain(tmuxName, colSession-5) + ansiColor("36", fmt.Sprintf(" [%d]", s.SubagentCount))
-		}
-
-		projectCol := s.ProjectName
-		if s.RelativeDir != "" {
-			projectCol += ansiColor("90", "::") + ansiColor("36", s.RelativeDir)
-		}
-		if s.Branch != "" {
-			projectCol += ansiColor("90", "::") + ansiColor("32", s.Branch)
+			sessionCol = " " + truncPlain(tmuxName, colSession-6) + ansiColor("36", fmt.Sprintf(" [%d]", s.SubagentCount))
 		}
 
 		dirCol := ansiColor("90", truncPlain(ShortenHome(s.CWD), colDir))
@@ -220,29 +203,15 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		}
 		statusCol := ansiColor(statusAnsi, statusDot+" "+statusLabel)
 
-		modelCol := s.ModelDisplay()
-
-		tokenCol := s.TokenDisplay()
-		tokenRatio := s.TokenRatio()
-		if tokenRatio > 0.9 {
-			tokenCol = ansiColor("31", tokenCol)
-		} else if tokenRatio > 0.75 {
-			tokenCol = ansiColor("33", tokenCol)
+		summaryCol := s.Summary
+		if summaryCol == "" {
+			summaryCol = ansiColor("90", "—")
 		}
 
-		activity := "—"
-		if s.LastActivity != "" {
-			activity = FormatTimestamp(s.LastActivity)
-		}
-
-		row := padCol(num, colNum) +
-			padCol(sessionCol, colSession) +
-			padCol(projectCol, colProject) +
+		row := padCol(sessionCol, colSession) +
 			padCol(dirCol, colDir) +
 			padCol(statusCol, colStatus) +
-			padCol(modelCol, colModel) +
-			padCol(tokenCol, colContext) +
-			padCol(activity, colActivity)
+			padCol(summaryCol, colSummary)
 
 		plainLen := visibleWidth(row)
 		if plainLen < innerW {

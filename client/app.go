@@ -311,6 +311,7 @@ func (a *App) ToJSON(tagFilters []string) string {
 			"started_at":          s.StartedAt,
 			"tags":                s.Tags,
 			"subagent_count":      s.SubagentCount,
+			"summary":             s.Summary,
 		})
 	}
 

@@ -83,6 +83,7 @@ type Session struct {
 	LastFileSize      uint64            `json:"last_file_size"`
 	Tags              map[string]string `json:"tags"`
 	SubagentCount     int               `json:"subagent_count"`
+	Summary           string            `json:"summary,omitempty"`
 }
 
 func (s *Session) RoomID() string {
