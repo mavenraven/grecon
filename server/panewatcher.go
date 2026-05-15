@@ -91,9 +91,14 @@ func (pw *PaneWatcher) Sync(sessionNames []string) {
 
 func (pw *PaneWatcher) startClientLocked(sessionName string) {
 	cmd := exec.Command("tmux", "-C", "attach-session", "-t", sessionName)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "panewatcher: stdin pipe for %s: %v\n", sessionName, err)
+		return
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "panewatcher: pipe for %s: %v\n", sessionName, err)
+		fmt.Fprintf(os.Stderr, "panewatcher: stdout pipe for %s: %v\n", sessionName, err)
 		return
 	}
 	if err := cmd.Start(); err != nil {
@@ -104,6 +109,7 @@ func (pw *PaneWatcher) startClientLocked(sessionName string) {
 	pw.clients[sessionName] = cmd
 
 	go func() {
+		defer stdin.Close()
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 256*1024), 256*1024)
 		for scanner.Scan() {
