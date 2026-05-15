@@ -21,6 +21,9 @@ func SocketPath() string {
 }
 
 func SerializeSessions(sessions []*Session) []byte {
+	if sessions == nil {
+		sessions = []*Session{}
+	}
 	data, err := json.Marshal(sessions)
 	if err != nil {
 		data = []byte("[]")
