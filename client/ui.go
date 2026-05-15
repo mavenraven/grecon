@@ -139,10 +139,9 @@ func (m tuiModel) View() string {
 func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	innerW := width - 2
 
-	colName := 22
-	colDir := 20
-	colStatus := 10
-	colSummary := innerW - colName - colDir - colStatus
+	colName := 30
+	colStatus := 12
+	colSummary := innerW - colName - colStatus
 	if colSummary < 20 {
 		colSummary = 20
 	}
@@ -159,7 +158,6 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 
 	header := buildRow([]colSpec{
 		{colName, " Name"},
-		{colDir, "Directory"},
 		{colStatus, "Status"},
 		{colSummary, "Summary"},
 	})
@@ -178,7 +176,8 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 
 		switch row.Kind {
 		case RowHeader:
-			line := " \x1b[1m" + row.Header + "\x1b[0m"
+			headerText := truncEllipsis(row.Header, colName-1)
+			line := " \x1b[1m" + headerText + "\x1b[0m"
 			plainLen := visibleWidth(line)
 			if plainLen < innerW {
 				line += strings.Repeat(" ", innerW-plainLen)
@@ -206,9 +205,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 			if agentName == "" {
 				agentName = "—"
 			}
-			nameCol := ansiColor("90", prefix) + agentName
-
-			dirCol := ansiColor("90", truncPlain(ShortenHome(s.CWD), colDir))
+			nameCol := ansiColor("90", prefix) + truncEllipsis(agentName, colName-visibleWidth(prefix))
 
 			statusCol := formatStatus(s.Status)
 
@@ -218,7 +215,6 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 			}
 
 			rowStr := padCol(nameCol, colName) +
-				padCol(dirCol, colDir) +
 				padCol(statusCol, colStatus) +
 				padCol(summaryCol, colSummary)
 
@@ -261,20 +257,19 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 			}
 			prefix := vbar + branch
 
-			desc := sa.AgentType
-			if sa.Description != "" {
-				desc += ": " + sa.Description
-			}
-			nameCol := ansiColor("90", prefix) + ansiColor("36", truncPlain(desc, colName+colDir-visibleWidth(prefix)))
+			nameCol := ansiColor("90", prefix) + ansiColor("36", truncEllipsis(sa.AgentType, colName-visibleWidth(prefix)))
 
 			statusCol := formatStatus(sa.Status)
 
 			summaryCol := sa.Summary
+			if summaryCol == "" && sa.Description != "" {
+				summaryCol = sa.Description
+			}
 			if summaryCol == "" {
 				summaryCol = ansiColor("90", "—")
 			}
 
-			rowStr := padCol(nameCol, colName+colDir) +
+			rowStr := padCol(nameCol, colName) +
 				padCol(statusCol, colStatus) +
 				padCol(summaryCol, colSummary)
 
@@ -461,6 +456,17 @@ func visibleWidth(s string) int {
 		count++
 	}
 	return count
+}
+
+func truncEllipsis(s string, maxWidth int) string {
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 3 {
+		return string(runes[:maxWidth])
+	}
+	return string(runes[:maxWidth-3]) + "..."
 }
 
 func truncPlain(s string, maxWidth int) string {

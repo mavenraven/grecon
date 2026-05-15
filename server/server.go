@@ -72,10 +72,6 @@ func RunServer() {
 		prev := prevSessions
 		pollCount := uint64(0)
 		for {
-			sleepStart := time.Now()
-			time.Sleep(2 * time.Second)
-			actualSleep := time.Since(sleepStart)
-
 			pollCount++
 			pollStart := time.Now()
 			allSessions := DiscoverSessions(prev)
@@ -98,8 +94,10 @@ func RunServer() {
 			data = SerializeSessions(sessions)
 			mu.Unlock()
 
-			fmt.Printf("poll #%d: sleep=%v discover=%dms sessions=%d\n",
-				pollCount, actualSleep.Round(100*time.Millisecond), pollMs, len(sessions))
+			fmt.Printf("poll #%d: discover=%dms sessions=%d\n",
+				pollCount, pollMs, len(sessions))
+
+			time.Sleep(100 * time.Millisecond)
 		}
 	}()
 
