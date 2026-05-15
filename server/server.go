@@ -39,23 +39,19 @@ func RunServer() {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.Remove(path)
 
-	prevSessions := make(map[string]*Session)
-	allSessions := DiscoverSessions(prevSessions)
-	var sessions []*Session
-	for _, s := range allSessions {
-		if s.TmuxSession != "" {
-			sessions = append(sessions, s)
-		}
+	prev := make(map[string]*Session)
+	initial := discoverTmuxSessions(prev)
+	for _, s := range initial {
+		prev[s.SessionID] = s
 	}
-	prevSessions = make(map[string]*Session)
-	for _, s := range sessions {
-		prevSessions[s.SessionID] = s
-	}
+	AttachSummaries(initial)
 
-	AttachSummaries(sessions)
+	pw := NewPaneWatcher()
+	defer pw.Stop()
+	syncPaneWatcher(pw, initial)
 
 	var mu sync.Mutex
-	data := SerializeSessions(sessions)
+	data := SerializeSessions(initial)
 
 	listener, err := net.Listen("unix", path)
 	if err != nil {
@@ -72,33 +68,41 @@ func RunServer() {
 				fmt.Fprintf(os.Stderr, "PANIC in poll goroutine: %v\n", r)
 			}
 		}()
-		prev := prevSessions
+		sessions := initial
 		pollCount := uint64(0)
+		discoverTick := 0
+		const discoverInterval = 5
 		for {
 			pollCount++
-			pollStart := time.Now()
-			allSessions := DiscoverSessions(prev)
-			var sessions []*Session
-			for _, s := range allSessions {
-				if s.TmuxSession != "" {
-					sessions = append(sessions, s)
+			discoverTick++
+
+			if discoverTick >= discoverInterval {
+				discoverTick = 0
+				pollStart := time.Now()
+				sessions = discoverTmuxSessions(prev)
+				pollMs := time.Since(pollStart).Milliseconds()
+
+				prev = make(map[string]*Session)
+				for _, s := range sessions {
+					prev[s.SessionID] = s
+				}
+
+				AttachSummaries(sessions)
+				syncPaneWatcher(pw, sessions)
+
+				fmt.Printf("poll #%d: discover=%dms sessions=%d\n",
+					pollCount, pollMs, len(sessions))
+			}
+
+			for _, s := range sessions {
+				if status, ok := pw.GetStatus(s.TmuxSession); ok {
+					s.Status = debounceStatus(s.SessionID, status)
 				}
 			}
-			pollMs := time.Since(pollStart).Milliseconds()
-
-			prev = make(map[string]*Session)
-			for _, s := range sessions {
-				prev[s.SessionID] = s
-			}
-
-			AttachSummaries(sessions)
 
 			mu.Lock()
 			data = SerializeSessions(sessions)
 			mu.Unlock()
-
-			fmt.Printf("poll #%d: discover=%dms sessions=%d\n",
-				pollCount, pollMs, len(sessions))
 
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -159,4 +163,25 @@ func RequireFetch() ([]*Session, error) {
 		return sessions, nil
 	}
 	return nil, fmt.Errorf("grecon server is not running. Start it with: grecon server")
+}
+
+func discoverTmuxSessions(prev map[string]*Session) []*Session {
+	all := DiscoverSessions(prev)
+	var sessions []*Session
+	for _, s := range all {
+		if s.TmuxSession != "" {
+			sessions = append(sessions, s)
+		}
+	}
+	return sessions
+}
+
+func syncPaneWatcher(pw *PaneWatcher, sessions []*Session) {
+	var names []string
+	for _, s := range sessions {
+		if s.TmuxSession != "" {
+			names = append(names, s.TmuxSession)
+		}
+	}
+	pw.Sync(names)
 }

@@ -62,7 +62,7 @@ func (a *App) StartBackgroundRefresh() {
 			select {
 			case <-a.stopChan:
 				return
-			case <-time.After(2 * time.Second):
+			case <-time.After(500 * time.Millisecond):
 			}
 		}
 	}()
