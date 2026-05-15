@@ -39,9 +39,7 @@ type tuiModel struct {
 
 func newTUIModel() (tuiModel, error) {
 	app := NewApp()
-	if err := app.Refresh(); err != nil {
-		return tuiModel{}, err
-	}
+	app.Refresh()
 	app.StartBackgroundRefresh()
 	return tuiModel{app: app, width: 80, height: 24}, nil
 }
