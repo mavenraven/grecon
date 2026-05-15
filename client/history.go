@@ -256,6 +256,13 @@ func readSessionCWD(path string) string {
 	return ""
 }
 
+func resumeSessionName(e ResumeEntry) string {
+	if name := server.LoadTmuxName(e.SessionID); name != "" {
+		return name
+	}
+	return dirName(e.CWD)
+}
+
 func execRun(name string, args ...string) {
 	exec.Command(name, args...).Run()
 }
@@ -349,7 +356,7 @@ func (m resumeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				e := m.entries[m.selected]
 				m.result = &resumeResult{
 					sessionID: e.SessionID,
-					name:      dirName(e.CWD),
+					name:      resumeSessionName(e),
 				}
 			}
 			return m, tea.Quit
