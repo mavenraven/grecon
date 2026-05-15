@@ -53,7 +53,8 @@ func main() {
 			if launchCommand != "" {
 				cmdPtr = &launchCommand
 			}
-			sessName, err := client.CreateSession(name, cwd, cmdPtr, launchTags, launchWorktree)
+			claudeName := client.GenerateFunName()
+			sessName, err := client.CreateSession(name, cwd, claudeName, cmdPtr, launchTags, launchWorktree)
 			if err != nil {
 				return err
 			}

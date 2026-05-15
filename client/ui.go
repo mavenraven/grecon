@@ -199,11 +199,14 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 				prefix = " ├ "
 			}
 
-			projName := s.ProjectName
-			if projName == "" {
-				projName = "—"
+			agentName := s.ClaudeName
+			if agentName == "" {
+				agentName = s.ProjectName
 			}
-			nameCol := ansiColor("90", prefix) + projName
+			if agentName == "" {
+				agentName = "—"
+			}
+			nameCol := ansiColor("90", prefix) + agentName
 
 			dirCol := ansiColor("90", truncPlain(ShortenHome(s.CWD), colDir))
 

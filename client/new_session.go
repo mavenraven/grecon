@@ -12,28 +12,31 @@ type field int
 
 const (
 	fieldName field = iota
+	fieldClaudeName
 	fieldCWD
 	fieldWorktree
 )
 
 type newSessionModel struct {
-	name      string
-	cwd       string
-	worktree  bool
-	cursorPos int
-	active    field
-	result    *string
-	width     int
-	height    int
+	name       string
+	claudeName string
+	cwd        string
+	worktree   bool
+	cursorPos  int
+	active     field
+	result     *string
+	width      int
+	height     int
 }
 
 func newNewSessionModel() newSessionModel {
 	name, cwd := DefaultNewSessionInfo()
 	return newSessionModel{
-		name:      name,
-		cwd:       cwd,
-		cursorPos: len(name),
-		active:    fieldName,
+		name:       name,
+		claudeName: GenerateFunName(),
+		cwd:        cwd,
+		cursorPos:  len(name),
+		active:     fieldName,
 	}
 }
 
@@ -41,6 +44,8 @@ func (m newSessionModel) activeText() string {
 	switch m.active {
 	case fieldName:
 		return m.name
+	case fieldClaudeName:
+		return m.claudeName
 	case fieldCWD:
 		return m.cwd
 	default:
@@ -61,7 +66,7 @@ func (m *newSessionModel) submit() {
 			cwd = home + cwd[1:]
 		}
 	}
-	name, err := CreateSession(strings.TrimSpace(m.name), cwd, nil, nil, m.worktree)
+	name, err := CreateSession(strings.TrimSpace(m.name), cwd, strings.TrimSpace(m.claudeName), nil, nil, m.worktree)
 	if err != nil {
 		empty := ""
 		m.result = &empty
@@ -109,19 +114,28 @@ func (m newSessionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.result = &empty
 			return m, tea.Quit
 		case "enter":
-			if m.active == fieldName {
+			switch m.active {
+			case fieldName:
 				if strings.TrimSpace(m.name) == "" {
 					return m, nil
 				}
+				m.active = fieldClaudeName
+				m.cursorPos = len(m.claudeName)
+				return m, nil
+			case fieldClaudeName:
 				m.active = fieldCWD
 				m.cursorPos = len(m.cwd)
 				return m, nil
+			default:
+				m.submit()
+				return m, tea.Quit
 			}
-			m.submit()
-			return m, tea.Quit
 		case "tab", "down":
 			switch m.active {
 			case fieldName:
+				m.active = fieldClaudeName
+				m.cursorPos = len(m.claudeName)
+			case fieldClaudeName:
 				m.active = fieldCWD
 				m.cursorPos = len(m.cwd)
 			case fieldCWD:
@@ -131,15 +145,20 @@ func (m newSessionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.active {
 			case fieldName:
 				m.active = fieldWorktree
-			case fieldCWD:
+			case fieldClaudeName:
 				m.active = fieldName
 				m.cursorPos = len(m.name)
+			case fieldCWD:
+				m.active = fieldClaudeName
+				m.cursorPos = len(m.claudeName)
 			}
 		case "backspace":
 			if m.cursorPos > 0 {
 				switch m.active {
 				case fieldName:
 					m.name = m.name[:m.cursorPos-1] + m.name[m.cursorPos:]
+				case fieldClaudeName:
+					m.claudeName = m.claudeName[:m.cursorPos-1] + m.claudeName[m.cursorPos:]
 				case fieldCWD:
 					m.cwd = m.cwd[:m.cursorPos-1] + m.cwd[m.cursorPos:]
 				}
@@ -151,6 +170,8 @@ func (m newSessionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.active {
 				case fieldName:
 					m.name = m.name[:m.cursorPos] + m.name[m.cursorPos+1:]
+				case fieldClaudeName:
+					m.claudeName = m.claudeName[:m.cursorPos] + m.claudeName[m.cursorPos+1:]
 				case fieldCWD:
 					m.cwd = m.cwd[:m.cursorPos] + m.cwd[m.cursorPos+1:]
 				}
@@ -171,6 +192,8 @@ func (m newSessionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.active {
 			case fieldName:
 				m.name = ""
+			case fieldClaudeName:
+				m.claudeName = ""
 			case fieldCWD:
 				m.cwd = ""
 			}
@@ -181,6 +204,8 @@ func (m newSessionModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.active {
 				case fieldName:
 					m.name = m.name[:m.cursorPos] + ch + m.name[m.cursorPos:]
+				case fieldClaudeName:
+					m.claudeName = m.claudeName[:m.cursorPos] + ch + m.claudeName[m.cursorPos:]
 				case fieldCWD:
 					m.cwd = m.cwd[:m.cursorPos] + ch + m.cwd[m.cursorPos:]
 				}
@@ -198,16 +223,27 @@ func (m newSessionModel) View() string {
 	if m.active == fieldName {
 		nameBorder = cyanStyle
 	}
+	claudeBorder := dimStyle
+	if m.active == fieldClaudeName {
+		claudeBorder = cyanStyle
+	}
 	cwdBorder := dimStyle
 	if m.active == fieldCWD {
 		cwdBorder = cyanStyle
 	}
 
-	b.WriteString(nameBorder.Render("┌─ Name ─" + strings.Repeat("─", max(0, m.width-10)) + "┐"))
+	b.WriteString(nameBorder.Render("┌─ Tmux Session ─" + strings.Repeat("─", max(0, m.width-18)) + "┐"))
 	b.WriteString("\n")
 	b.WriteString(nameBorder.Render("│") + " " + m.name + strings.Repeat(" ", max(0, m.width-len(m.name)-4)) + " " + nameBorder.Render("│"))
 	b.WriteString("\n")
 	b.WriteString(nameBorder.Render("└" + strings.Repeat("─", max(0, m.width-2)) + "┘"))
+	b.WriteString("\n")
+
+	b.WriteString(claudeBorder.Render("┌─ Claude Name ─" + strings.Repeat("─", max(0, m.width-17)) + "┐"))
+	b.WriteString("\n")
+	b.WriteString(claudeBorder.Render("│") + " " + m.claudeName + strings.Repeat(" ", max(0, m.width-len(m.claudeName)-4)) + " " + claudeBorder.Render("│"))
+	b.WriteString("\n")
+	b.WriteString(claudeBorder.Render("└" + strings.Repeat("─", max(0, m.width-2)) + "┘"))
 	b.WriteString("\n")
 
 	b.WriteString(cwdBorder.Render("┌─ Directory ─" + strings.Repeat("─", max(0, m.width-15)) + "┐"))
@@ -229,7 +265,7 @@ func (m newSessionModel) View() string {
 	b.WriteString("\n")
 
 	switch m.active {
-	case fieldName:
+	case fieldName, fieldClaudeName:
 		b.WriteString(" " + cyanStyle.Render("Enter") + " next  " +
 			cyanStyle.Render("Tab") + " switch  " +
 			cyanStyle.Render("Esc") + " cancel")

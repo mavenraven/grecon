@@ -23,7 +23,7 @@ func SwitchToPane(target string) {
 	}
 }
 
-func CreateSession(name, cwd string, command *string, tags []string, worktree bool) (string, error) {
+func CreateSession(name, cwd, claudeName string, command *string, tags []string, worktree bool) (string, error) {
 	if !server.ValidateCWD(cwd) {
 		return "", fmt.Errorf("invalid working directory: %s", cwd)
 	}
@@ -38,12 +38,19 @@ func CreateSession(name, cwd string, command *string, tags []string, worktree bo
 		args = append(args, "-e", fmt.Sprintf("RECON_TAGS=%s", tagsVal))
 	}
 
+	if claudeName != "" {
+		args = append(args, "-e", fmt.Sprintf("RECON_CLAUDE_NAME=%s", claudeName))
+	}
+
 	if command != nil {
 		parts := strings.Fields(*command)
 		args = append(args, parts...)
 	} else {
 		claudePath := whichClaude()
 		args = append(args, claudePath)
+		if claudeName != "" {
+			args = append(args, "-n", claudeName)
+		}
 		if worktree {
 			args = append(args, "--worktree")
 		}

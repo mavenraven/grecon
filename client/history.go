@@ -214,7 +214,10 @@ func deleteSession(sessionID, projectDir, cwd string) {
 		for _, subdir := range []string{"file-history", "tasks", "debug", "plans"} {
 			os.RemoveAll(filepath.Join(claude, subdir, sessionID))
 		}
-		os.Remove(filepath.Join(home, ".recon", "sessions", sessionID))
+		recon := filepath.Join(home, ".recon")
+		os.Remove(filepath.Join(recon, "sessions", sessionID))
+		os.Remove(filepath.Join(recon, "tmux-names", sessionID))
+		os.Remove(filepath.Join(recon, "claude-names", sessionID))
 	}
 
 	if idx := strings.Index(cwd, "/.claude/worktrees/"); idx >= 0 {
@@ -413,7 +416,12 @@ func (m resumeModel) View() string {
 			if i >= maxRows {
 				break
 			}
-			name := server.LoadSessionName(e.SessionID)
+			claudeName := server.LoadClaudeName(e.SessionID)
+			tmuxName := server.LoadTmuxName(e.SessionID)
+			name := claudeName
+			if name == "" {
+				name = tmuxName
+			}
 			if name == "" {
 				if len(e.SessionID) > 8 {
 					name = e.SessionID[:8]
