@@ -139,10 +139,10 @@ func (m tuiModel) View() string {
 func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	innerW := width - 2
 
-	colSession := 20
+	colName := 22
 	colDir := 20
 	colStatus := 10
-	colSummary := innerW - colSession - colDir - colStatus
+	colSummary := innerW - colName - colDir - colStatus
 	if colSummary < 20 {
 		colSummary = 20
 	}
@@ -158,7 +158,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	b.WriteString("\n")
 
 	header := buildRow([]colSpec{
-		{colSession, " Session"},
+		{colName, " Name"},
 		{colDir, "Directory"},
 		{colStatus, "Status"},
 		{colSummary, "Summary"},
@@ -167,76 +167,131 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	b.WriteString(headerStyle.Render(fitToWidth(header, innerW)))
 	b.WriteString("│\n")
 
-	filtered := app.FilteredIndices()
+	rows := app.DisplayRows()
 	rowsAvail := contentHeight - 1
+	agentIdx := 0
 
-	for di, realIdx := range filtered {
+	for di, row := range rows {
 		if di >= rowsAvail {
 			break
 		}
-		s := app.Sessions[realIdx]
 
-		needBg := di == app.Selected || s.Status == server.StatusInput
-
-		tmuxName := s.TmuxSession
-		if tmuxName == "" {
-			tmuxName = "—"
-		}
-
-		sessionCol := " " + tmuxName
-		if s.SubagentCount > 0 {
-			sessionCol = " " + truncPlain(tmuxName, colSession-6) + ansiColor("36", fmt.Sprintf(" [%d]", s.SubagentCount))
-		}
-
-		dirCol := ansiColor("90", truncPlain(ShortenHome(s.CWD), colDir))
-
-		var statusDot, statusLabel, statusAnsi string
-		switch s.Status {
-		case server.StatusNew:
-			statusDot, statusLabel, statusAnsi = "●", "New", "34"
-		case server.StatusWorking:
-			statusDot, statusLabel, statusAnsi = "●", "Working", "32"
-		case server.StatusIdle:
-			statusDot, statusLabel, statusAnsi = "●", "Idle", "90"
-		case server.StatusInput:
-			statusDot, statusLabel, statusAnsi = "●", "Input", "33"
-		}
-		statusCol := ansiColor(statusAnsi, statusDot+" "+statusLabel)
-
-		summaryCol := s.Summary
-		if summaryCol == "" {
-			summaryCol = ansiColor("90", "—")
-		}
-
-		row := padCol(sessionCol, colSession) +
-			padCol(dirCol, colDir) +
-			padCol(statusCol, colStatus) +
-			padCol(summaryCol, colSummary)
-
-		plainLen := visibleWidth(row)
-		if plainLen < innerW {
-			row += strings.Repeat(" ", innerW-plainLen)
-		}
-
-		if needBg {
-			var bgCode string
-			if s.Status == server.StatusInput && di == app.Selected {
-				bgCode = "\x1b[48;2;80;65;0m"
-			} else if s.Status == server.StatusInput {
-				bgCode = "\x1b[48;2;50;40;0m"
-			} else {
-				bgCode = "\x1b[48;5;240m"
+		switch row.Kind {
+		case RowHeader:
+			line := " \x1b[1m" + row.Header + "\x1b[0m"
+			plainLen := visibleWidth(line)
+			if plainLen < innerW {
+				line += strings.Repeat(" ", innerW-plainLen)
 			}
-			row = applyRowBg(row, bgCode)
-		}
+			b.WriteString("│")
+			b.WriteString(line)
+			b.WriteString("│\n")
 
-		b.WriteString("│")
-		b.WriteString(row)
-		b.WriteString("│\n")
+		case RowAgent:
+			s := row.Session
+			isSelected := agentIdx == app.Selected
+			needBg := isSelected || s.Status == server.StatusInput
+
+			var prefix string
+			if row.IsLast {
+				prefix = " └ "
+			} else {
+				prefix = " ├ "
+			}
+
+			projName := s.ProjectName
+			if projName == "" {
+				projName = "—"
+			}
+			nameCol := ansiColor("90", prefix) + projName
+
+			dirCol := ansiColor("90", truncPlain(ShortenHome(s.CWD), colDir))
+
+			statusCol := formatStatus(s.Status)
+
+			summaryCol := s.Summary
+			if summaryCol == "" {
+				summaryCol = ansiColor("90", "—")
+			}
+
+			rowStr := padCol(nameCol, colName) +
+				padCol(dirCol, colDir) +
+				padCol(statusCol, colStatus) +
+				padCol(summaryCol, colSummary)
+
+			plainLen := visibleWidth(rowStr)
+			if plainLen < innerW {
+				rowStr += strings.Repeat(" ", innerW-plainLen)
+			}
+
+			if needBg {
+				var bgCode string
+				if s.Status == server.StatusInput && isSelected {
+					bgCode = "\x1b[48;2;80;65;0m"
+				} else if s.Status == server.StatusInput {
+					bgCode = "\x1b[48;2;50;40;0m"
+				} else {
+					bgCode = "\x1b[48;5;240m"
+				}
+				rowStr = applyRowBg(rowStr, bgCode)
+			}
+
+			b.WriteString("│")
+			b.WriteString(rowStr)
+			b.WriteString("│\n")
+			agentIdx++
+
+		case RowSubagent:
+			sa := row.Subagent
+
+			var vbar string
+			if row.AgentIsLast {
+				vbar = "   "
+			} else {
+				vbar = " │ "
+			}
+			var branch string
+			if row.IsLast {
+				branch = " └ "
+			} else {
+				branch = " ├ "
+			}
+			prefix := vbar + branch
+
+			desc := sa.AgentType
+			if sa.Description != "" {
+				desc += ": " + sa.Description
+			}
+			nameCol := ansiColor("90", prefix) + ansiColor("36", truncPlain(desc, colName+colDir-visibleWidth(prefix)))
+
+			statusCol := formatStatus(sa.Status)
+
+			summaryCol := sa.Summary
+			if summaryCol == "" {
+				summaryCol = ansiColor("90", "—")
+			}
+
+			rowStr := padCol(nameCol, colName+colDir) +
+				padCol(statusCol, colStatus) +
+				padCol(summaryCol, colSummary)
+
+			plainLen := visibleWidth(rowStr)
+			if plainLen < innerW {
+				rowStr += strings.Repeat(" ", innerW-plainLen)
+			}
+
+			b.WriteString("│")
+			b.WriteString(rowStr)
+			b.WriteString("│\n")
+		}
 	}
 
+	rendered := len(rows)
+	if rendered > rowsAvail {
+		rendered = rowsAvail
+	}
 	emptyRow := strings.Repeat(" ", innerW)
-	for i := len(filtered); i < rowsAvail; i++ {
+	for i := rendered; i < rowsAvail; i++ {
 		b.WriteString("│")
 		b.WriteString(emptyRow)
 		b.WriteString("│\n")
@@ -247,10 +302,25 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	b.WriteString("┘\n")
 }
 
+func formatStatus(status server.SessionStatus) string {
+	var dot, label, ansi string
+	switch status {
+	case server.StatusNew:
+		dot, label, ansi = "●", "New", "34"
+	case server.StatusWorking:
+		dot, label, ansi = "●", "Work", "32"
+	case server.StatusIdle:
+		dot, label, ansi = "●", "Idle", "90"
+	case server.StatusInput:
+		dot, label, ansi = "●", "Input", "33"
+	}
+	return ansiColor(ansi, dot+" "+label)
+}
+
 func renderSearchBar(b *strings.Builder, app *App, width int) {
 	line := cyanStyle.Render("/") + app.FilterText
 	if !app.FilterActive && app.FilterText != "" {
-		count := len(app.FilteredIndices())
+		count := app.SelectableCount()
 		suffix := "es"
 		if count == 1 {
 			suffix = ""

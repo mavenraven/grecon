@@ -84,6 +84,16 @@ type Session struct {
 	Tags              map[string]string `json:"tags"`
 	SubagentCount     int               `json:"subagent_count"`
 	Summary           string            `json:"summary,omitempty"`
+	Subagents         []*Subagent       `json:"subagents,omitempty"`
+}
+
+type Subagent struct {
+	AgentID     string        `json:"agent_id"`
+	AgentType   string        `json:"agent_type"`
+	Description string        `json:"description"`
+	JSONLPath   string        `json:"jsonl_path"`
+	Status      SessionStatus `json:"status"`
+	Summary     string        `json:"summary,omitempty"`
 }
 
 func (s *Session) RoomID() string {
@@ -659,7 +669,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			status := debounceStatus(sessionID, rawStatus)
 			SaveSessionName(sessionID, live.tmuxSession)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
-			subagentCount := countSubagents(path)
+			subagents := discoverSubagents(path)
 
 			results[idx] = &Session{
 				SessionID:         sessionID,
@@ -680,7 +690,8 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				JSONLPath:         path,
 				LastFileSize:      info.fileSize,
 				Tags:              tags,
-				SubagentCount:     subagentCount,
+				SubagentCount:     len(subagents),
+				Subagents:         subagents,
 			}
 		}(i, c[0], c[1], c[2])
 	}
@@ -751,7 +762,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				status := debounceStatus(sessionID, rawStatus)
 				SaveSessionName(sessionID, live.tmuxSession)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
-				subagentCount := countSubagents(resolvedPath)
+				subagents := discoverSubagents(resolvedPath)
 
 				unmatchedResults[idx] = &Session{
 					SessionID:         sessionID,
@@ -772,7 +783,8 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					JSONLPath:         resolvedPath,
 					LastFileSize:      info.fileSize,
 					Tags:              tags,
-					SubagentCount:     subagentCount,
+					SubagentCount:     len(subagents),
+					Subagents:         subagents,
 				}
 			} else {
 				SaveSessionName(sessionID, live.tmuxSession)
@@ -1095,14 +1107,14 @@ func isSpinner(c rune) bool {
 	return (c >= '✠' && c <= '❧') || c == '⏺' || c == '·'
 }
 
-func countSubagents(jsonlPath string) int {
+func discoverSubagents(jsonlPath string) []*Subagent {
 	sessionID := strings.TrimSuffix(filepath.Base(jsonlPath), ".jsonl")
-	subagentDir := filepath.Join(filepath.Dir(jsonlPath), sessionID)
+	subagentDir := filepath.Join(filepath.Dir(jsonlPath), sessionID, "subagents")
 	entries, err := os.ReadDir(subagentDir)
 	if err != nil {
-		return 0
+		return nil
 	}
-	count := 0
+	var subagents []*Subagent
 	for _, e := range entries {
 		if filepath.Ext(e.Name()) != ".jsonl" {
 			continue
@@ -1111,11 +1123,42 @@ func countSubagents(jsonlPath string) int {
 		if err != nil {
 			continue
 		}
-		if time.Since(info.ModTime()) < 5*time.Minute {
-			count++
+		if time.Since(info.ModTime()) >= 2*time.Minute {
+			continue
 		}
+
+		agentID := strings.TrimSuffix(e.Name(), ".jsonl")
+		agentID = strings.TrimPrefix(agentID, "agent-")
+		jsonlFile := filepath.Join(subagentDir, e.Name())
+
+		var status SessionStatus
+		if time.Since(info.ModTime()) < 30*time.Second {
+			status = StatusWorking
+		} else {
+			status = StatusIdle
+		}
+
+		sa := &Subagent{
+			AgentID:   agentID,
+			JSONLPath: jsonlFile,
+			Status:    status,
+		}
+
+		metaPath := filepath.Join(subagentDir, strings.TrimSuffix(e.Name(), ".jsonl")+".meta.json")
+		if metaData, err := os.ReadFile(metaPath); err == nil {
+			var meta struct {
+				AgentType   string `json:"agentType"`
+				Description string `json:"description"`
+			}
+			if json.Unmarshal(metaData, &meta) == nil {
+				sa.AgentType = meta.AgentType
+				sa.Description = meta.Description
+			}
+		}
+
+		subagents = append(subagents, sa)
 	}
-	return count
+	return subagents
 }
 
 func reconSessionsDir() string {

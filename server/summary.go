@@ -36,33 +36,41 @@ var globalSummary = &summaryState{
 
 func AttachSummaries(sessions []*Session) {
 	for _, s := range sessions {
-		if s.JSONLPath == "" {
-			continue
+		if s.JSONLPath != "" {
+			attachSummary(s.SessionID, s.JSONLPath, &s.Summary)
 		}
 
-		activity := extractRecentActivity(s.JSONLPath)
-		hash := hashEntry(activity)
-
-		globalSummary.mu.Lock()
-		oldHash := globalSummary.hashes[s.SessionID]
-		isPending := globalSummary.pending[s.SessionID]
-		s.Summary = globalSummary.summaries[s.SessionID]
-
-		if hash != oldHash && !isPending {
-			globalSummary.hashes[s.SessionID] = hash
-
-			if activity == "" {
-				globalSummary.summaries[s.SessionID] = ""
-				s.Summary = ""
-				globalSummary.mu.Unlock()
-			} else {
-				globalSummary.pending[s.SessionID] = true
-				globalSummary.mu.Unlock()
-				go generateSummary(s.SessionID, activity)
+		for _, sa := range s.Subagents {
+			if sa.JSONLPath != "" {
+				attachSummary("sa:"+sa.AgentID, sa.JSONLPath, &sa.Summary)
 			}
-		} else {
-			globalSummary.mu.Unlock()
 		}
+	}
+}
+
+func attachSummary(key, jsonlPath string, target *string) {
+	activity := extractRecentActivity(jsonlPath)
+	hash := hashEntry(activity)
+
+	globalSummary.mu.Lock()
+	oldHash := globalSummary.hashes[key]
+	isPending := globalSummary.pending[key]
+	*target = globalSummary.summaries[key]
+
+	if hash != oldHash && !isPending {
+		globalSummary.hashes[key] = hash
+
+		if activity == "" {
+			globalSummary.summaries[key] = ""
+			*target = ""
+			globalSummary.mu.Unlock()
+		} else {
+			globalSummary.pending[key] = true
+			globalSummary.mu.Unlock()
+			go generateSummary(key, activity)
+		}
+	} else {
+		globalSummary.mu.Unlock()
 	}
 }
 

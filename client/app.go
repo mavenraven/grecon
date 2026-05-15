@@ -11,6 +11,23 @@ import (
 	"grecon/server"
 )
 
+type RowKind int
+
+const (
+	RowHeader RowKind = iota
+	RowAgent
+	RowSubagent
+)
+
+type DisplayRow struct {
+	Kind        RowKind
+	Session     *server.Session
+	Subagent    *server.Subagent
+	Header      string
+	IsLast      bool
+	AgentIsLast bool
+}
+
 type App struct {
 	Sessions     []*server.Session
 	Selected     int
@@ -65,12 +82,7 @@ func (a *App) TryReceive() {
 	if a.hasNew {
 		a.Sessions = a.latest
 		a.hasNew = false
-		count := len(a.FilteredIndices())
-		if count == 0 {
-			a.Selected = 0
-		} else if a.Selected >= count {
-			a.Selected = count - 1
-		}
+		a.clampSelection()
 	}
 }
 
@@ -80,12 +92,7 @@ func (a *App) Refresh() error {
 		return err
 	}
 	a.Sessions = sessions
-	count := len(a.FilteredIndices())
-	if count == 0 {
-		a.Selected = 0
-	} else if a.Selected >= count {
-		a.Selected = count - 1
-	}
+	a.clampSelection()
 	return nil
 }
 
@@ -93,40 +100,98 @@ func (a *App) AdvanceTick() {
 	a.Tick++
 }
 
-func (a *App) FilteredIndices() []int {
-	if a.FilterText == "" {
-		indices := make([]int, len(a.Sessions))
-		for i := range indices {
-			indices[i] = i
+func buildDisplayRows(sessions []*server.Session) []DisplayRow {
+	type group struct {
+		name     string
+		sessions []*server.Session
+	}
+
+	var groups []group
+	seen := make(map[string]int)
+
+	for _, s := range sessions {
+		name := s.TmuxSession
+		if name == "" {
+			name = "—"
 		}
-		return indices
+		if idx, ok := seen[name]; ok {
+			groups[idx].sessions = append(groups[idx].sessions, s)
+		} else {
+			seen[name] = len(groups)
+			groups = append(groups, group{name: name, sessions: []*server.Session{s}})
+		}
+	}
+
+	var rows []DisplayRow
+	for _, g := range groups {
+		rows = append(rows, DisplayRow{Kind: RowHeader, Header: g.name})
+		for i, s := range g.sessions {
+			lastAgent := i == len(g.sessions)-1
+			rows = append(rows, DisplayRow{
+				Kind: RowAgent, Session: s,
+				IsLast: lastAgent,
+			})
+			for j, sa := range s.Subagents {
+				rows = append(rows, DisplayRow{
+					Kind: RowSubagent, Session: s, Subagent: sa,
+					IsLast:      j == len(s.Subagents)-1,
+					AgentIsLast: lastAgent,
+				})
+			}
+		}
+	}
+	return rows
+}
+
+func (a *App) filteredSessions() []*server.Session {
+	if a.FilterText == "" {
+		return a.Sessions
 	}
 	query := strings.ToLower(a.FilterText)
-	var indices []int
-	for i, s := range a.Sessions {
+	var result []*server.Session
+	for _, s := range a.Sessions {
 		if strings.Contains(strings.ToLower(s.ProjectName), query) ||
 			strings.Contains(strings.ToLower(s.TmuxSession), query) {
-			indices = append(indices, i)
+			result = append(result, s)
 		}
 	}
-	return indices
+	return result
+}
+
+func (a *App) DisplayRows() []DisplayRow {
+	return buildDisplayRows(a.filteredSessions())
+}
+
+func (a *App) SelectableCount() int {
+	count := 0
+	for _, r := range a.DisplayRows() {
+		if r.Kind == RowAgent {
+			count++
+		}
+	}
+	return count
+}
+
+func (a *App) SelectedSession() *server.Session {
+	idx := 0
+	for _, r := range a.DisplayRows() {
+		if r.Kind == RowAgent {
+			if idx == a.Selected {
+				return r.Session
+			}
+			idx++
+		}
+	}
+	return nil
 }
 
 func (a *App) clampSelection() {
-	count := len(a.FilteredIndices())
+	count := a.SelectableCount()
 	if count == 0 {
 		a.Selected = 0
 	} else if a.Selected >= count {
 		a.Selected = count - 1
 	}
-}
-
-func (a *App) resolveSelected() int {
-	indices := a.FilteredIndices()
-	if a.Selected >= 0 && a.Selected < len(indices) {
-		return indices[a.Selected]
-	}
-	return -1
 }
 
 func (a *App) HandleKey(code string, ctrl bool) {
@@ -168,7 +233,7 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 		a.FilterCursor = 0
 		a.Selected = 0
 	case "j", "down":
-		count := len(a.FilteredIndices())
+		count := a.SelectableCount()
 		if count > 0 && a.Selected+1 < count {
 			a.Selected++
 		}
@@ -177,16 +242,14 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 			a.Selected--
 		}
 	case "enter":
-		if idx := a.resolveSelected(); idx >= 0 {
-			s := a.Sessions[idx]
+		if s := a.SelectedSession(); s != nil {
 			if s.PaneTarget != "" {
 				SwitchToPane(s.PaneTarget)
 				a.ShouldQuit = true
 			}
 		}
 	case "x":
-		if idx := a.resolveSelected(); idx >= 0 {
-			s := a.Sessions[idx]
+		if s := a.SelectedSession(); s != nil {
 			if s.TmuxSession != "" {
 				KillSession(s.TmuxSession)
 			}
@@ -202,10 +265,8 @@ func (a *App) handleKeyFilter(code string, ctrl bool) {
 		a.FilterCursor = 0
 		a.Selected = 0
 	case code == "enter":
-		indices := a.FilteredIndices()
-		if len(indices) == 1 {
-			s := a.Sessions[indices[0]]
-			if s.PaneTarget != "" {
+		if a.SelectableCount() == 1 {
+			if s := a.SelectedSession(); s != nil && s.PaneTarget != "" {
 				SwitchToPane(s.PaneTarget)
 				a.ShouldQuit = true
 				return
@@ -245,7 +306,7 @@ func (a *App) handleKeyFilter(code string, ctrl bool) {
 		a.FilterCursor = 0
 		a.clampSelection()
 	case code == "down" || code == "j":
-		count := len(a.FilteredIndices())
+		count := a.SelectableCount()
 		if count > 0 && a.Selected+1 < count {
 			a.Selected++
 		}
@@ -311,6 +372,7 @@ func (a *App) ToJSON(tagFilters []string) string {
 			"started_at":          s.StartedAt,
 			"tags":                s.Tags,
 			"subagent_count":      s.SubagentCount,
+			"subagents":           s.Subagents,
 			"summary":             s.Summary,
 		})
 	}
