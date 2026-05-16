@@ -190,7 +190,7 @@ var (
 	statusDebounceMap = make(map[string]statusHold)
 )
 
-const statusHoldSecs = 3
+const statusHoldSecs = 0.5
 
 func debounceStatus(sessionID string, raw SessionStatus) SessionStatus {
 	statusDebounceMu.Lock()
