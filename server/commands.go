@@ -109,7 +109,7 @@ func handleCommand(conn net.Conn) {
 func fixDefaultPath(tmuxSession string) {
 	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
-		out, err := exec.Command("tmux", "display-message", "-t", tmuxSession, "-p", "#{pane_current_path}").Output()
+		out, err := exec.Command("tmux", "display-message", "-t", tmuxSession+":0.0", "-p", "#{pane_current_path}").Output()
 		if err != nil {
 			continue
 		}
