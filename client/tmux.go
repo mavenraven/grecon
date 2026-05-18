@@ -65,7 +65,6 @@ func CreateSession(name, cwd, claudeName string, command *string, tags []string,
 		server.SendCommand(server.Command{
 			Type:        "fix-default-path",
 			TmuxSession: sessionName,
-			OriginalCWD: cwd,
 		})
 	}
 

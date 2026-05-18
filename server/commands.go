@@ -16,7 +16,6 @@ import (
 type Command struct {
 	Type        string `json:"type"`
 	TmuxSession string `json:"tmux_session,omitempty"`
-	OriginalCWD string `json:"original_cwd,omitempty"`
 }
 
 func CommandSocketPath() string {
@@ -103,12 +102,11 @@ func handleCommand(conn net.Conn) {
 
 	switch cmd.Type {
 	case "fix-default-path":
-		go fixDefaultPath(cmd.TmuxSession, cmd.OriginalCWD)
+		go fixDefaultPath(cmd.TmuxSession)
 	}
 }
 
-func fixDefaultPath(tmuxSession, originalCWD string) {
-	worktreeDir := filepath.Join(originalCWD, ".claude", "worktrees")
+func fixDefaultPath(tmuxSession string) {
 	for i := 0; i < 30; i++ {
 		time.Sleep(500 * time.Millisecond)
 		out, err := exec.Command("tmux", "display-message", "-t", tmuxSession, "-p", "#{pane_current_path}").Output()
@@ -116,7 +114,7 @@ func fixDefaultPath(tmuxSession, originalCWD string) {
 			continue
 		}
 		panePath := strings.TrimSpace(string(out))
-		if panePath != "" && panePath != originalCWD && strings.HasPrefix(panePath, worktreeDir) {
+		if strings.Contains(panePath, "/.claude/worktrees/") {
 			exec.Command("tmux", "attach-session", "-t", tmuxSession, "-c", panePath).Run()
 			return
 		}
