@@ -413,7 +413,6 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 	fileSize := uint64(stat.Size())
 
 	if fileSize == prevFileSize && prevFileSize > 0 {
-		refreshBgLiveness(prevBgTasks)
 		return parsedInfo{
 			inputTokens: prevInput, outputTokens: prevOutput,
 			model: prevModel, effort: prevEffort, lastActivity: prevActivity,
@@ -557,7 +556,6 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 	var activeBg []*BackgroundTask
 	for _, t := range bgTasks {
 		if !completedTasks[t.TaskID] {
-			t.Alive = isTaskAlive(t.OutputPath)
 			activeBg = append(activeBg, t)
 		}
 	}
@@ -714,20 +712,6 @@ func isValidTaskID(id string) bool {
 	return true
 }
 
-func refreshBgLiveness(tasks []*BackgroundTask) {
-	for _, t := range tasks {
-		t.Alive = isTaskAlive(t.OutputPath)
-	}
-}
-
-func isTaskAlive(outputPath string) bool {
-	if outputPath == "" {
-		return false
-	}
-	err := exec.Command("lsof", outputPath).Run()
-	return err == nil
-}
-
 func stripANSI(s string) string {
 	var result strings.Builder
 	runes := []rune(s)
@@ -767,7 +751,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 
 	var paneLines string
 	var pidSessionMap map[int]sessionFileInfo
-	var childrenMap map[int][]int
+	var pt *processTree
 
 	var wgA sync.WaitGroup
 	wgA.Add(3)
@@ -785,11 +769,11 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 	}()
 	go func() {
 		defer wgA.Done()
-		childrenMap = buildChildrenMap()
+		pt = buildProcessTree()
 	}()
 	wgA.Wait()
 
-	claudePanes, sessionNames := processPaneLines(paneLines, childrenMap)
+	claudePanes, sessionNames := processPaneLines(paneLines, pt.children)
 	liveMap := buildLiveMapFromPanes(claudePanes, pidSessionMap)
 
 	var claudeTargets []string
@@ -876,6 +860,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			}
 
 			info := parseJSONL(path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks)
+			markBgTaskLiveness(info.backgroundTasks, live.pid, pt)
 			cwd := info.cwd
 			if cwd == "" && prev != nil {
 				cwd = prev.CWD
@@ -982,6 +967,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				}
 
 				info := parseJSONL(resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks)
+				markBgTaskLiveness(info.backgroundTasks, live.pid, pt)
 				cwd := info.cwd
 				if cwd == "" {
 					cwd = live.paneCWD
@@ -1108,12 +1094,18 @@ func readPIDSessionMap() map[int]sessionFileInfo {
 	return m
 }
 
-func buildChildrenMap() map[int][]int {
-	out, err := exec.Command("ps", "-eo", "pid,ppid").Output()
+type processTree struct {
+	children map[int][]int
+	args     map[int]string
+}
+
+func buildProcessTree() *processTree {
+	out, err := exec.Command("ps", "-eo", "pid,ppid,args").Output()
 	if err != nil {
-		return nil
+		return &processTree{children: nil, args: nil}
 	}
-	m := make(map[int][]int)
+	children := make(map[int][]int)
+	args := make(map[int]string)
 	for _, line := range strings.Split(string(out), "\n")[1:] {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
@@ -1124,9 +1116,48 @@ func buildChildrenMap() map[int][]int {
 		if err1 != nil || err2 != nil {
 			continue
 		}
-		m[ppid] = append(m[ppid], pid)
+		children[ppid] = append(children[ppid], pid)
+		if len(fields) > 2 {
+			args[pid] = strings.Join(fields[2:], " ")
+		}
 	}
-	return m
+	return &processTree{children: children, args: args}
+}
+
+func (pt *processTree) descendantArgs(pid int) []string {
+	if pt.children == nil {
+		return nil
+	}
+	var result []string
+	queue := pt.children[pid]
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if a, ok := pt.args[cur]; ok {
+			result = append(result, a)
+		}
+		queue = append(queue, pt.children[cur]...)
+	}
+	return result
+}
+
+func markBgTaskLiveness(tasks []*BackgroundTask, sessionPID int, pt *processTree) {
+	if len(tasks) == 0 || pt == nil {
+		return
+	}
+	descArgs := pt.descendantArgs(sessionPID)
+	for _, t := range tasks {
+		if t.Command == "" {
+			continue
+		}
+		t.Alive = false
+		for _, a := range descArgs {
+			if strings.Contains(a, t.Command) {
+				t.Alive = true
+				break
+			}
+		}
+	}
 }
 
 func processPaneLines(paneOutput string, childrenMap map[int][]int) (claudePanes [][4]string, sessionNames []string) {
