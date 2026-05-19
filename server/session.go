@@ -1153,14 +1153,13 @@ func markBgTaskLiveness(tasks []*BackgroundTask, sessionPID int, pt *processTree
 	descArgs := pt.descendantArgs(sessionPID)
 	now := time.Now()
 	for _, t := range tasks {
-		if t.Command == "" {
-			continue
-		}
 		alive := false
-		for _, a := range descArgs {
-			if strings.Contains(a, t.Command) {
-				alive = true
-				break
+		if t.Command != "" {
+			for _, a := range descArgs {
+				if strings.Contains(a, t.Command) {
+					alive = true
+					break
+				}
 			}
 		}
 		t.Alive = alive
