@@ -87,6 +87,7 @@ type Session struct {
 	ClaudeName        string            `json:"claude_name,omitempty"`
 	Subagents         []*Subagent       `json:"subagents,omitempty"`
 	Wakeup            *Wakeup           `json:"wakeup,omitempty"`
+	BackgroundTasks   []*BackgroundTask `json:"background_tasks,omitempty"`
 }
 
 type Subagent struct {
@@ -101,6 +102,12 @@ type Subagent struct {
 type Wakeup struct {
 	Reason  string    `json:"reason"`
 	FiresAt time.Time `json:"fires_at"`
+}
+
+type BackgroundTask struct {
+	TaskID      string `json:"task_id"`
+	Description string `json:"description"`
+	Command     string `json:"command"`
 }
 
 func (s *Session) RoomID() string {
@@ -175,14 +182,15 @@ type sessionFileInfo struct {
 }
 
 type parsedInfo struct {
-	inputTokens  uint64
-	outputTokens uint64
-	model        string
-	effort       string
-	cwd          string
-	lastActivity string
-	fileSize     uint64
-	wakeup       *Wakeup
+	inputTokens     uint64
+	outputTokens    uint64
+	model           string
+	effort          string
+	cwd             string
+	lastActivity    string
+	fileSize        uint64
+	wakeup          *Wakeup
+	backgroundTasks []*BackgroundTask
 }
 
 // --- Status debounce ---
@@ -388,13 +396,13 @@ type usageEntry struct {
 	CacheReadInputTokens     uint64 `json:"cache_read_input_tokens"`
 }
 
-func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevModel, prevEffort, prevActivity string, prevWakeup *Wakeup) parsedInfo {
+func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevModel, prevEffort, prevActivity string, prevWakeup *Wakeup, prevBgTasks []*BackgroundTask) parsedInfo {
 	f, err := os.Open(path)
 	if err != nil {
 		return parsedInfo{
 			inputTokens: prevInput, outputTokens: prevOutput,
 			model: prevModel, effort: prevEffort, lastActivity: prevActivity,
-			wakeup: prevWakeup,
+			wakeup: prevWakeup, backgroundTasks: prevBgTasks,
 		}
 	}
 	defer f.Close()
@@ -406,7 +414,7 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 		return parsedInfo{
 			inputTokens: prevInput, outputTokens: prevOutput,
 			model: prevModel, effort: prevEffort, lastActivity: prevActivity,
-			fileSize: fileSize, wakeup: prevWakeup,
+			fileSize: fileSize, wakeup: prevWakeup, backgroundTasks: prevBgTasks,
 		}
 	}
 
@@ -428,6 +436,12 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 	}
 
 	wakeup := prevWakeup
+	bgTasks := make(map[string]*BackgroundTask)
+	for _, t := range prevBgTasks {
+		bgTasks[t.TaskID] = t
+	}
+	completedTasks := make(map[string]bool)
+	pendingBgCalls := make(map[string]*BackgroundTask) // tool_use_id -> partial task
 
 	reader := bufio.NewReaderSize(f, 64*1024)
 	for {
@@ -469,6 +483,9 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 					wakeup = w
 				}
 			}
+			if strings.Contains(trimmed, `"run_in_background"`) {
+				parseBgLaunch(trimmed, pendingBgCalls)
+			}
 		} else if strings.Contains(trimmed, `"type":"user"`) || strings.Contains(trimmed, `"type":"system"`) {
 			var entry jsonlEntry
 			if json.Unmarshal([]byte(trimmed), &entry) != nil {
@@ -479,6 +496,15 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 			}
 			if entry.CWD != "" {
 				cwd = entry.CWD
+			}
+
+			if strings.Contains(trimmed, "Command running in background with ID:") {
+				parseBgResult(trimmed, pendingBgCalls, bgTasks)
+			}
+			if strings.Contains(trimmed, "<task-notification>") {
+				if tid := extractTaskNotificationID(trimmed); tid != "" {
+					completedTasks[tid] = true
+				}
 			}
 
 			if strings.Contains(trimmed, "<local-command-stdout>Set model to") &&
@@ -525,11 +551,104 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 		wakeup = nil
 	}
 
+	var activeBg []*BackgroundTask
+	for _, t := range bgTasks {
+		if !completedTasks[t.TaskID] {
+			activeBg = append(activeBg, t)
+		}
+	}
+
 	return parsedInfo{
 		inputTokens: totalInput, outputTokens: totalOutput,
 		model: model, effort: effort, cwd: cwd,
 		lastActivity: lastActivity, fileSize: fileSize, wakeup: wakeup,
+		backgroundTasks: activeBg,
 	}
+}
+
+func parseBgLaunch(line string, pending map[string]*BackgroundTask) {
+	type bgEntry struct {
+		Message struct {
+			Content []struct {
+				Type  string `json:"type"`
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Input struct {
+					Command            string `json:"command"`
+					Description        string `json:"description"`
+					RunInBackground    bool   `json:"run_in_background"`
+				} `json:"input"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	var entry bgEntry
+	if json.Unmarshal([]byte(line), &entry) != nil {
+		return
+	}
+	for _, c := range entry.Message.Content {
+		if c.Name == "Bash" && c.Input.RunInBackground && c.ID != "" {
+			pending[c.ID] = &BackgroundTask{
+				Description: c.Input.Description,
+				Command:     c.Input.Command,
+			}
+		}
+	}
+}
+
+func parseBgResult(line string, pending map[string]*BackgroundTask, bgTasks map[string]*BackgroundTask) {
+	prefix := "Command running in background with ID: "
+	idx := strings.Index(line, prefix)
+	if idx < 0 {
+		return
+	}
+	rest := line[idx+len(prefix):]
+	dot := strings.IndexByte(rest, '.')
+	if dot < 0 {
+		return
+	}
+	taskID := rest[:dot]
+	if taskID == "" {
+		return
+	}
+
+	task := &BackgroundTask{TaskID: taskID}
+
+	type resultEntry struct {
+		Message struct {
+			Content []struct {
+				ToolUseID string `json:"tool_use_id"`
+				Content   string `json:"content"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	var entry resultEntry
+	if json.Unmarshal([]byte(line), &entry) == nil {
+		for _, c := range entry.Message.Content {
+			if strings.Contains(c.Content, taskID) && c.ToolUseID != "" {
+				if p, ok := pending[c.ToolUseID]; ok {
+					task.Description = p.Description
+					task.Command = p.Command
+					delete(pending, c.ToolUseID)
+				}
+				break
+			}
+		}
+	}
+
+	bgTasks[taskID] = task
+}
+
+func extractTaskNotificationID(line string) string {
+	start := strings.Index(line, "<task-id>")
+	if start < 0 {
+		return ""
+	}
+	start += len("<task-id>")
+	end := strings.Index(line[start:], "</task-id>")
+	if end < 0 {
+		return ""
+	}
+	return line[start : start+end]
 }
 
 func parseWakeup(line, timestamp string) *Wakeup {
@@ -701,6 +820,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			var prevSize, prevIn, prevOut uint64
 			var prevModel, prevEffort, prevAct string
 			var prevWakeup *Wakeup
+			var prevBgTasks []*BackgroundTask
 			if prev != nil {
 				prevSize = prev.LastFileSize
 				prevIn = prev.TotalInputTokens
@@ -709,9 +829,10 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				prevEffort = prev.Effort
 				prevAct = prev.LastActivity
 				prevWakeup = prev.Wakeup
+				prevBgTasks = prev.BackgroundTasks
 			}
 
-			info := parseJSONL(path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup)
+			info := parseJSONL(path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks)
 			cwd := info.cwd
 			if cwd == "" && prev != nil {
 				cwd = prev.CWD
@@ -752,6 +873,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				Subagents:         subagents,
 				ClaudeName:        claudeName,
 				Wakeup:            info.wakeup,
+				BackgroundTasks:   info.backgroundTasks,
 			}
 		}(i, c[0], c[1], c[2])
 	}
@@ -804,6 +926,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				var prevSize, prevIn, prevOut uint64
 				var prevModel, prevEffort, prevAct string
 				var prevWakeup *Wakeup
+				var prevBgTasks []*BackgroundTask
 				if prev != nil {
 					prevSize = prev.LastFileSize
 					prevIn = prev.TotalInputTokens
@@ -812,9 +935,10 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					prevEffort = prev.Effort
 					prevAct = prev.LastActivity
 					prevWakeup = prev.Wakeup
+					prevBgTasks = prev.BackgroundTasks
 				}
 
-				info := parseJSONL(resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup)
+				info := parseJSONL(resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks)
 				cwd := info.cwd
 				if cwd == "" {
 					cwd = live.paneCWD
@@ -851,6 +975,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					Subagents:         subagents,
 					ClaudeName:        claudeName,
 					Wakeup:            info.wakeup,
+				BackgroundTasks:   info.backgroundTasks,
 				}
 			} else {
 				SaveTmuxName(sessionID, live.tmuxSession)

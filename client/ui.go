@@ -280,6 +280,47 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 			b.WriteString(rowStr)
 			b.WriteString("│\n")
 
+		case RowBackground:
+			bt := row.BackgroundTask
+
+			var vbar string
+			if row.AgentIsLast {
+				vbar = "   "
+			} else {
+				vbar = " │ "
+			}
+			var branch string
+			if row.IsLast {
+				branch = " └ "
+			} else {
+				branch = " ├ "
+			}
+			prefix := vbar + branch
+
+			nameCol := ansiColor("90", prefix) + ansiColor("33", "background")
+			statusCol := ansiColor("33", "● Run")
+
+			summaryCol := bt.Description
+			if summaryCol == "" {
+				summaryCol = bt.Command
+			}
+			if summaryCol == "" {
+				summaryCol = ansiColor("90", "—")
+			}
+
+			rowStr := padCol(nameCol, colName) +
+				padCol(statusCol, colStatus) +
+				padCol(summaryCol, colSummary)
+
+			plainLen := visibleWidth(rowStr)
+			if plainLen < innerW {
+				rowStr += strings.Repeat(" ", innerW-plainLen)
+			}
+
+			b.WriteString("│")
+			b.WriteString(rowStr)
+			b.WriteString("│\n")
+
 		case RowWakeup:
 			w := row.Wakeup
 

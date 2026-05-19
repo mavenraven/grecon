@@ -17,16 +17,18 @@ const (
 	RowAgent
 	RowSubagent
 	RowWakeup
+	RowBackground
 )
 
 type DisplayRow struct {
-	Kind        RowKind
-	Session     *server.Session
-	Subagent    *server.Subagent
-	Wakeup      *server.Wakeup
-	Header      string
-	IsLast      bool
-	AgentIsLast bool
+	Kind           RowKind
+	Session        *server.Session
+	Subagent       *server.Subagent
+	Wakeup         *server.Wakeup
+	BackgroundTask *server.BackgroundTask
+	Header         string
+	IsLast         bool
+	AgentIsLast    bool
 }
 
 type App struct {
@@ -127,10 +129,24 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 				IsLast: lastAgent,
 			})
 			hasWakeup := s.Wakeup != nil && s.Wakeup.FiresAt.After(time.Now())
+			tailCount := 0
+			if hasWakeup {
+				tailCount++
+			}
+			tailCount += len(s.BackgroundTasks)
+
 			for j, sa := range s.Subagents {
 				rows = append(rows, DisplayRow{
 					Kind: RowSubagent, Session: s, Subagent: sa,
-					IsLast:      j == len(s.Subagents)-1 && !hasWakeup,
+					IsLast:      j == len(s.Subagents)-1 && tailCount == 0,
+					AgentIsLast: lastAgent,
+				})
+			}
+			for j, bt := range s.BackgroundTasks {
+				isLast := j == len(s.BackgroundTasks)-1 && !hasWakeup
+				rows = append(rows, DisplayRow{
+					Kind: RowBackground, Session: s, BackgroundTask: bt,
+					IsLast:      isLast,
 					AgentIsLast: lastAgent,
 				})
 			}
