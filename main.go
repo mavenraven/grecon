@@ -16,7 +16,14 @@ func main() {
 		Short:   "Monitor and manage Claude Code sessions running in tmux",
 		Version: "0.6.1",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return client.RunTUI()
+			target, err := client.RunTUI()
+			if err != nil {
+				return err
+			}
+			if target != "" {
+				client.SwitchToPane(target)
+			}
+			return nil
 		},
 		SilenceUsage: true,
 	}

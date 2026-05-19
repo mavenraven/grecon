@@ -344,17 +344,21 @@ func renderFooter(b *strings.Builder, app *App, width int) {
 	b.WriteString(fitToWidth(line, width))
 }
 
-func RunTUI() error {
+func RunTUI() (string, error) {
 	m, err := newTUIModel()
 	if err != nil {
-		return err
+		return "", err
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err = p.Run()
+	result, err := p.Run()
 	if err != nil && strings.Contains(err.Error(), "resource temporarily unavailable") {
-		return nil
+		return "", nil
 	}
-	return err
+	if err != nil {
+		return "", err
+	}
+	tm := result.(tuiModel)
+	return tm.app.SwitchTarget, nil
 }
 
 type colSpec struct {

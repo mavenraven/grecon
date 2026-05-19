@@ -31,6 +31,7 @@ type App struct {
 	Sessions     []*server.Session
 	Selected     int
 	ShouldQuit   bool
+	SwitchTarget string
 	Tick         uint64
 	FilterActive bool
 	FilterText   string
@@ -201,7 +202,7 @@ func (a *App) HandleKey(code string, ctrl bool) {
 func (a *App) jumpToNextInput() {
 	for _, s := range a.Sessions {
 		if s.Status == server.StatusInput && s.PaneTarget != "" {
-			SwitchToPane(s.PaneTarget)
+			a.SwitchTarget = s.PaneTarget
 			a.ShouldQuit = true
 			return
 		}
@@ -236,7 +237,7 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 	case "enter":
 		if s := a.SelectedSession(); s != nil {
 			if s.PaneTarget != "" {
-				SwitchToPane(s.PaneTarget)
+				a.SwitchTarget = s.PaneTarget
 				a.ShouldQuit = true
 			}
 		}
@@ -259,7 +260,7 @@ func (a *App) handleKeyFilter(code string, ctrl bool) {
 	case code == "enter":
 		if a.SelectableCount() == 1 {
 			if s := a.SelectedSession(); s != nil && s.PaneTarget != "" {
-				SwitchToPane(s.PaneTarget)
+				a.SwitchTarget = s.PaneTarget
 				a.ShouldQuit = true
 				return
 			}
