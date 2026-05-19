@@ -662,11 +662,10 @@ func parseBgResult(line string, pending map[string]*BackgroundTask, bgTasks map[
 		if c.Type != "tool_result" || c.ToolUseID == "" {
 			continue
 		}
-		idx := strings.Index(c.Content, prefix)
-		if idx < 0 {
+		if !strings.HasPrefix(c.Content, prefix) {
 			continue
 		}
-		rest := c.Content[idx+len(prefix):]
+		rest := c.Content[len(prefix):]
 		dot := strings.IndexByte(rest, '.')
 		if dot < 0 || dot > 20 {
 			continue
@@ -747,11 +746,10 @@ func parseMonitorResult(line string, pending map[string]*BackgroundTask, bgTasks
 		if c.Type != "tool_result" || c.ToolUseID == "" {
 			continue
 		}
-		idx := strings.Index(c.Content, prefix)
-		if idx < 0 {
+		if !strings.HasPrefix(c.Content, prefix) {
 			continue
 		}
-		rest := c.Content[idx+len(prefix):]
+		rest := c.Content[len(prefix):]
 		comma := strings.IndexByte(rest, ',')
 		if comma < 0 || comma > 20 {
 			continue
