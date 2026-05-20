@@ -474,6 +474,12 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 			continue
 		}
 
+		if strings.Contains(trimmed, "<task-notification>") {
+			if tid := extractTaskNotificationID(trimmed); tid != "" {
+				completedTasks[tid] = true
+			}
+		}
+
 		if strings.Contains(trimmed, `"type":"assistant"`) {
 			if strings.Contains(trimmed, `"<synthetic>"`) {
 				continue
@@ -527,12 +533,6 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 			} else {
 				cleanupPendingCalls(trimmed, pendingBgCalls)
 			}
-			if strings.Contains(trimmed, "<task-notification>") {
-				if tid := extractTaskNotificationID(trimmed); tid != "" {
-					completedTasks[tid] = true
-				}
-			}
-
 			if strings.Contains(trimmed, "<local-command-stdout>Set model to") &&
 				!strings.Contains(trimmed, "toolUseResult") &&
 				!strings.Contains(trimmed, "tool_result") {
