@@ -1270,6 +1270,22 @@ func (pt *processTree) descendantArgs(pid int) []string {
 const bgTaskDeadTTL = 2 * time.Minute
 
 func bgCommandFragments(cmd string) []string {
+	var frags []string
+
+	// For multi-line commands, use the first non-empty line as a fragment.
+	// ps renders embedded newlines as literal \012, so single-quote escaping
+	// in eval wrappers can break full-command matching. The first line is
+	// usually a comment or simple command that matches cleanly.
+	if strings.Contains(cmd, "\n") {
+		for _, line := range strings.Split(cmd, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				frags = append(frags, line)
+				break
+			}
+		}
+	}
+
 	// ps renders embedded newlines as literal \012, so normalize
 	cmd = strings.ReplaceAll(cmd, "\n", `\012`)
 
@@ -1281,9 +1297,12 @@ func bgCommandFragments(cmd string) []string {
 	first = strings.TrimSuffix(first, "2>&1")
 	first = strings.TrimSpace(first)
 	if first == "" {
+		if len(frags) > 0 {
+			return frags
+		}
 		return nil
 	}
-	return []string{first, cmd}
+	return append(frags, first, cmd)
 }
 
 func markBgTaskLiveness(tasks []*BackgroundTask, sessionPID int, pt *processTree) {
