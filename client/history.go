@@ -205,6 +205,13 @@ func dirName(path string) string {
 	return filepath.Base(path)
 }
 
+func projectName(cwd string) string {
+	if idx := strings.Index(cwd, "/.claude/worktrees/"); idx >= 0 {
+		return filepath.Base(cwd[:idx])
+	}
+	return filepath.Base(cwd)
+}
+
 func deleteSession(sessionID, projectDir, cwd string) {
 	jsonlPath := filepath.Join(projectDir, sessionID+".jsonl")
 
@@ -383,15 +390,14 @@ func (m resumeModel) View() string {
 	innerW := w - 2
 
 	colNum := 4
-	colTmux := 16
-	colClaude := 18
+	colTmux := 24
+	colClaude := 20
 	colModel := 12
-	colContext := 14
 	colActivity := 14
 
 	gitColWidth := 10
 	for _, e := range m.entries {
-		project := dirName(e.CWD)
+		project := projectName(e.CWD)
 		gitLen := len(project)
 		if e.Branch != "" {
 			gitLen += 2 + len(e.Branch)
@@ -401,7 +407,7 @@ func (m resumeModel) View() string {
 		}
 	}
 	gitColWidth += 2
-	remaining := innerW - colNum - colTmux - colClaude - colModel - colContext - colActivity
+	remaining := innerW - colNum - colTmux - colClaude - colModel - colActivity
 	if gitColWidth > remaining {
 		gitColWidth = remaining
 	}
@@ -438,7 +444,6 @@ func (m resumeModel) View() string {
 			{colClaude, "Claude"},
 			{gitColWidth, "Git(Project::Branch)"},
 			{colModel, "Model"},
-			{colContext, "Context"},
 			{colActivity, "Last Active"},
 		})
 		b.WriteString("│")
@@ -467,7 +472,7 @@ func (m resumeModel) View() string {
 				claudeName = dimStyle.Render(sid)
 			}
 
-			project := dirName(e.CWD)
+			project := projectName(e.CWD)
 			gitCol := project
 			if e.Branch != "" {
 				gitCol = project + dimStyle.Render("::") + greenStyle.Render(e.Branch)
@@ -478,11 +483,6 @@ func (m resumeModel) View() string {
 				modelDisplay = server.ModelDisplayName(e.Model)
 			}
 
-			window := uint64(200_000)
-			if e.Model != "" {
-				window = server.ModelContextWindow(e.Model)
-			}
-			tokens := fmt.Sprintf("%dk / %s", e.Tokens/1000, server.FormatWindow(window))
 			lastActive := formatRelative(e.LastActive)
 
 			row := padCol(fmt.Sprintf(" %d ", i+1), colNum) +
@@ -490,7 +490,6 @@ func (m resumeModel) View() string {
 				padCol(claudeName, colClaude) +
 				padCol(gitCol, gitColWidth) +
 				padCol(modelDisplay, colModel) +
-				padCol(tokens, colContext) +
 				padCol(lastActive, colActivity)
 
 			plainLen := visibleWidth(row)
