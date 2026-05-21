@@ -69,9 +69,14 @@ func findResumableSessions() []ResumeEntry {
 				continue
 			}
 
+			realCWD := readSessionCWD(path)
+			if realCWD == "" {
+				realCWD = cwd
+			}
+
 			entries = append(entries, ResumeEntry{
 				SessionID:  sessionID,
-				CWD:        cwd,
+				CWD:        realCWD,
 				Branch:     summary.branch,
 				Model:      summary.model,
 				Tokens:     summary.tokens,
