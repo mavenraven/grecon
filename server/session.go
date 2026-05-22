@@ -1783,6 +1783,7 @@ func FindSessionCWD(sessionID string) string {
 			continue
 		}
 		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for i := 0; i < 20 && scanner.Scan(); i++ {
 			var v map[string]interface{}
 			if json.Unmarshal([]byte(scanner.Text()), &v) == nil {

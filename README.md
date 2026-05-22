@@ -7,17 +7,17 @@ Run multiple Claude Code instances in tmux, then manage them all from one place 
 ```
 +- grecon -- Claude Code Sessions ----------------------------------------+
 | Name                      Status    Summary                             |
-| bzl-investigation                                                       |
-| +- ripe-bolt              * Idle    Cleaned up stale bazel processes... |
-| |  +- shell               * Run     Run full b4b_core spec suite        |
-| |  +- monitor             * Run     b4b_core full spec suite completion |
-| +- fond-quail             * Work    Setting up tracked branch auto...   |
-| recon                                                                   |
-| +- deft-cloud             * Idle    Worktree branches off HEAD not...   |
-| |  +- wakeup in 12m30s    * Sleep   checking long build                 |
-| dx-meeting-tool                                                         |
-| +- vivid-shore            * Input   Waiting for approval to delete...   |
-| |  +- shell               * Run     Fetch top 5 GitHub contributors     |
+| api-refactor                                                            |
+| +- calm-river             * Work    Adding retry logic to deploy step   |
+| |  +- shell               * Run     Run full test suite                 |
+| |  +- monitor             * Run     Test suite completion               |
+| +- bright-fox             * Idle    Refactored auth middleware          |
+| webapp                                                                  |
+| +- quick-elk              * Input   Waiting for approval to delete...   |
+| |  +- wakeup in 4m20s     * Sleep   checking CI build                   |
+| infra                                                                   |
+| +- bold-hawk              * Work    Migrating config to new schema      |
+| |  +- shell               * Run     Running database migration          |
 +-------------------------------------------------------------------------+
  j/k navigate  Enter switch  x kill  / search  i next input  q quit
 ```

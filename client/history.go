@@ -253,6 +253,7 @@ func readSessionCWD(path string) string {
 	}
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for i := 0; i < 20 && scanner.Scan(); i++ {
 		line := scanner.Text()
 		if !strings.Contains(line, `"cwd"`) {
