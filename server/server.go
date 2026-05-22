@@ -89,6 +89,8 @@ func RunServer() {
 		mu.Unlock()
 	}
 
+	go RefreshResumeCache(nil)
+
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -123,6 +125,14 @@ func RunServer() {
 					pollCount, pollMs, len(sessions))
 
 				broadcast(sessions)
+
+				if pollCount%20 == 0 {
+					liveIDs := make(map[string]bool)
+					for _, s := range sessions {
+						liveIDs[s.SessionID] = true
+					}
+					go RefreshResumeCache(liveIDs)
+				}
 			}
 		}
 	}()

@@ -4,11 +4,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,77 +16,27 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-type ResumeEntry struct {
-	SessionID  string
-	CWD        string
-	Branch     string
-	Model      string
-	Tokens     uint64
-	LastActive string
-	ProjectDir string
-}
-
-func findResumableSessions() []ResumeEntry {
-	home, err := os.UserHomeDir()
-	if err != nil {
+func findResumableSessions() []server.ResumeEntry {
+	cached := server.ReadResumeCache()
+	if cached == nil {
 		return nil
 	}
-
 	liveIDs := getLiveSessionIDs()
-	projectsDir := filepath.Join(home, ".claude", "projects")
-	dirs, err := os.ReadDir(projectsDir)
-	if err != nil {
-		return nil
-	}
-
-	var entries []ResumeEntry
-	for _, dir := range dirs {
-		if !dir.IsDir() {
+	var entries []server.ResumeEntry
+	for _, e := range cached {
+		if liveIDs[e.SessionID] {
 			continue
 		}
-		dirPath := filepath.Join(projectsDir, dir.Name())
-		cwd := server.DecodeProjectPath(dirPath)
-		files, err := os.ReadDir(dirPath)
-		if err != nil {
-			continue
-		}
-		for _, file := range files {
-			if filepath.Ext(file.Name()) != ".jsonl" || file.IsDir() {
-				continue
-			}
-			path := filepath.Join(dirPath, file.Name())
-			sessionID := strings.TrimSuffix(file.Name(), ".jsonl")
-
-			if liveIDs[sessionID] {
-				continue
-			}
-
-			mtimeMs := fileMtimeMs(path)
-			summary := readJSONLSummary(path)
-			if summary.tokens == 0 {
-				continue
-			}
-
-			realCWD := readSessionCWD(path)
-			if realCWD == "" {
-				realCWD = cwd
-			}
-
-			entries = append(entries, ResumeEntry{
-				SessionID:  sessionID,
-				CWD:        realCWD,
-				Branch:     summary.branch,
-				Model:      summary.model,
-				Tokens:     summary.tokens,
-				LastActive: formatEpochMs(mtimeMs),
-				ProjectDir: dirPath,
-			})
-		}
+		entries = append(entries, server.ResumeEntry{
+			SessionID:  e.SessionID,
+			CWD:        e.CWD,
+			Branch:     e.Branch,
+			Model:      e.Model,
+			Tokens:     e.Tokens,
+			LastActive: e.LastActive,
+			ProjectDir: e.ProjectDir,
+		})
 	}
-
-	sort.Slice(entries, func(i, j int) bool {
-		return entries[i].LastActive > entries[j].LastActive
-	})
 	return entries
 }
 
@@ -99,111 +47,6 @@ func getLiveSessionIDs() map[string]bool {
 		ids[s.SessionID] = true
 	}
 	return ids
-}
-
-func fileMtimeMs(path string) uint64 {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	return uint64(info.ModTime().UnixMilli())
-}
-
-func formatEpochMs(ms uint64) string {
-	t := time.UnixMilli(int64(ms))
-	return t.UTC().Format(time.RFC3339)
-}
-
-type jsonlSummary struct {
-	model  string
-	branch string
-	tokens uint64
-}
-
-func readJSONLSummary(path string) jsonlSummary {
-	f, err := os.Open(path)
-	if err != nil {
-		return jsonlSummary{}
-	}
-	defer f.Close()
-
-	stat, _ := f.Stat()
-	size := stat.Size()
-	const tailBytes int64 = 1024 * 1024
-	if size > tailBytes {
-		f.Seek(size-tailBytes, io.SeekStart)
-		reader := bufio.NewReader(f)
-		reader.ReadString('\n')
-	}
-
-	reader := bufio.NewReaderSize(f, 64*1024)
-	const tailLines = 50
-	var ring []string
-
-	for {
-		line, err := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line != "" {
-			if len(ring) >= tailLines {
-				ring = ring[1:]
-			}
-			ring = append(ring, line)
-		}
-		if err != nil {
-			break
-		}
-	}
-
-	var model, branch string
-	var inputTokens, outputTokens uint64
-
-	for i := len(ring) - 1; i >= 0; i-- {
-		line := ring[i]
-
-		if branch == "" && strings.Contains(line, `"gitBranch"`) {
-			var v map[string]interface{}
-			if json.Unmarshal([]byte(line), &v) == nil {
-				if b, ok := v["gitBranch"].(string); ok {
-					branch = b
-				}
-			}
-		}
-
-		if strings.Contains(line, `"type":"assistant"`) {
-			var v map[string]interface{}
-			if json.Unmarshal([]byte(line), &v) != nil {
-				continue
-			}
-			msg, _ := v["message"].(map[string]interface{})
-			if msg == nil {
-				continue
-			}
-			if model == "" {
-				if m, ok := msg["model"].(string); ok {
-					model = m
-				}
-			}
-			if inputTokens == 0 {
-				if usage, ok := msg["usage"].(map[string]interface{}); ok {
-					it, _ := usage["input_tokens"].(float64)
-					cc, _ := usage["cache_creation_input_tokens"].(float64)
-					cr, _ := usage["cache_read_input_tokens"].(float64)
-					ot, _ := usage["output_tokens"].(float64)
-					inputTokens = uint64(it) + uint64(cc) + uint64(cr)
-					outputTokens = uint64(ot)
-				}
-			}
-			if model != "" && inputTokens > 0 && branch != "" {
-				break
-			}
-		}
-	}
-
-	return jsonlSummary{
-		model:  model,
-		branch: branch,
-		tokens: inputTokens + outputTokens,
-	}
 }
 
 func dirName(path string) string {
@@ -269,7 +112,7 @@ func readSessionCWD(path string) string {
 	return ""
 }
 
-func resumeSessionName(e ResumeEntry) string {
+func resumeSessionName(e server.ResumeEntry) string {
 	if name := server.LoadTmuxName(e.SessionID); name != "" {
 		return name
 	}
@@ -302,7 +145,7 @@ func formatRelative(ts string) string {
 // --- Resume picker TUI ---
 
 type resumeModel struct {
-	entries       []ResumeEntry
+	entries       []server.ResumeEntry
 	selected      int
 	confirmDelete bool
 	result        *resumeResult
