@@ -90,6 +90,9 @@ func main() {
 		Use:   "resume",
 		Short: "Resume a past session (interactive picker, or by ID)",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := server.RequireFetch(); err != nil {
+				return err
+			}
 			if resumeID != "" {
 				var namePtr *string
 				if resumeName != "" {
