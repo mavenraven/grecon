@@ -1277,9 +1277,17 @@ func bgCommandFragments(cmd string) []string {
 	// in eval wrappers can break full-command matching. The first line is
 	// usually a comment or simple command that matches cleanly.
 	if strings.Contains(cmd, "\n") {
-		for _, line := range strings.Split(cmd, "\n") {
+		lines := strings.Split(cmd, "\n")
+		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {
+				frags = append(frags, line)
+				break
+			}
+		}
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if line != "" && (len(frags) == 0 || line != frags[0]) {
 				frags = append(frags, line)
 				break
 			}
