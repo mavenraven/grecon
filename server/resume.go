@@ -257,7 +257,7 @@ func isTaskSession(path string) bool {
 		return false
 	}
 	defer f.Close()
-	buf := make([]byte, 128)
+	buf := make([]byte, 4096)
 	n, _ := f.Read(buf)
 	return strings.Contains(string(buf[:n]), `"queue-operation"`)
 }
