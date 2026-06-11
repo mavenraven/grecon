@@ -181,7 +181,7 @@ func (m resumeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y":
 				if m.selected < len(m.entries) {
 					e := m.entries[m.selected]
-					deleteSession(e.SessionID, e.ProjectDir, e.CWD)
+					go deleteSession(e.SessionID, e.ProjectDir, e.CWD)
 					m.entries = append(m.entries[:m.selected], m.entries[m.selected+1:]...)
 					if len(m.entries) == 0 {
 						m.selected = 0
