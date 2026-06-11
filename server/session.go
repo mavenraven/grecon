@@ -120,6 +120,7 @@ type BackgroundTask struct {
 	OutputPath  string     `json:"output_path,omitempty"`
 	Alive       bool       `json:"alive"`
 	SeenAlive   bool       `json:"-"`
+	Completed   bool       `json:"-"`
 	DeadSince   time.Time  `json:"dead_since,omitempty"`
 }
 
@@ -579,9 +580,10 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 
 	var activeBg []*BackgroundTask
 	for _, t := range bgTasks {
-		if !completedTasks[t.TaskID] {
-			activeBg = append(activeBg, t)
+		if completedTasks[t.TaskID] {
+			t.Completed = true
 		}
+		activeBg = append(activeBg, t)
 	}
 
 	return parsedInfo{
@@ -1322,16 +1324,26 @@ func markBgTaskLiveness(tasks []*BackgroundTask, sessionPID int, pt *processTree
 	for _, t := range tasks {
 		alive := false
 		if t.Command != "" {
-			frags := bgCommandFragments(t.Command)
-			for _, a := range descArgs {
-				for _, frag := range frags {
-					if strings.Contains(a, frag) {
+			if t.Completed {
+				fullCmd := strings.ReplaceAll(t.Command, "\n", `\012`)
+				for _, a := range descArgs {
+					if strings.Contains(a, fullCmd) {
 						alive = true
 						break
 					}
 				}
-				if alive {
-					break
+			} else {
+				frags := bgCommandFragments(t.Command)
+				for _, a := range descArgs {
+					for _, frag := range frags {
+						if strings.Contains(a, frag) {
+							alive = true
+							break
+						}
+					}
+					if alive {
+						break
+					}
 				}
 			}
 		}
@@ -1349,6 +1361,9 @@ func pruneStaleBgTasks(tasks []*BackgroundTask) []*BackgroundTask {
 	now := time.Now()
 	var kept []*BackgroundTask
 	for _, t := range tasks {
+		if t.Completed && !t.Alive {
+			continue
+		}
 		if !t.Alive && !t.SeenAlive {
 			continue
 		}
