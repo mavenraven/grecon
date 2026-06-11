@@ -257,11 +257,9 @@ func isTaskSession(path string) bool {
 		return false
 	}
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	if scanner.Scan() {
-		return strings.Contains(scanner.Text(), `"queue-operation"`)
-	}
-	return false
+	buf := make([]byte, 128)
+	n, _ := f.Read(buf)
+	return strings.Contains(string(buf[:n]), `"queue-operation"`)
 }
 
 func RefreshResumeCache(liveIDs map[string]bool) {
