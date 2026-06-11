@@ -52,6 +52,11 @@ func discoverResumableSessions(liveIDs map[string]bool) []ResumeEntry {
 		return nil
 	}
 
+	knownIDs := knownSessionIDs(home)
+	if len(knownIDs) == 0 {
+		return nil
+	}
+
 	projectsDir := filepath.Join(home, ".claude", "projects")
 	dirs, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -64,25 +69,11 @@ func discoverResumableSessions(liveIDs map[string]bool) []ResumeEntry {
 			continue
 		}
 		dirPath := filepath.Join(projectsDir, dir.Name())
-		files, err := os.ReadDir(dirPath)
-		if err != nil {
-			continue
-		}
-		for _, file := range files {
-			if filepath.Ext(file.Name()) != ".jsonl" || file.IsDir() {
-				continue
-			}
-			path := filepath.Join(dirPath, file.Name())
-			sessionID := strings.TrimSuffix(file.Name(), ".jsonl")
-
+		for sessionID := range knownIDs {
 			if liveIDs[sessionID] {
 				continue
 			}
-
-			if isTaskSession(path) {
-				continue
-			}
-
+			path := filepath.Join(dirPath, sessionID+".jsonl")
 			info, err := os.Stat(path)
 			if err != nil {
 				continue
@@ -115,6 +106,23 @@ func discoverResumableSessions(liveIDs map[string]bool) []ResumeEntry {
 		return entries[i].LastActive > entries[j].LastActive
 	})
 	return entries
+}
+
+func knownSessionIDs(home string) map[string]bool {
+	ids := make(map[string]bool)
+	for _, subdir := range []string{"tmux-names", "claude-names"} {
+		dir := filepath.Join(home, ".recon", subdir)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				ids[e.Name()] = true
+			}
+		}
+	}
+	return ids
 }
 
 func writeResumeCache(entries []ResumeEntry) {
@@ -249,17 +257,6 @@ func resumeSessionCWD(path string) string {
 		}
 	}
 	return ""
-}
-
-func isTaskSession(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-	buf := make([]byte, 4096)
-	n, _ := f.Read(buf)
-	return strings.Contains(string(buf[:n]), `"queue-operation"`)
 }
 
 func RefreshResumeCache(liveIDs map[string]bool) {
