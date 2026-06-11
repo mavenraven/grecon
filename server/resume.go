@@ -79,6 +79,10 @@ func discoverResumableSessions(liveIDs map[string]bool) []ResumeEntry {
 				continue
 			}
 
+			if isTaskSession(path) {
+				continue
+			}
+
 			info, err := os.Stat(path)
 			if err != nil {
 				continue
@@ -245,6 +249,19 @@ func resumeSessionCWD(path string) string {
 		}
 	}
 	return ""
+}
+
+func isTaskSession(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	if scanner.Scan() {
+		return strings.Contains(scanner.Text(), `"queue-operation"`)
+	}
+	return false
 }
 
 func RefreshResumeCache(liveIDs map[string]bool) {
