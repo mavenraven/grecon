@@ -82,17 +82,21 @@ func RestoreSessions() {
 	claudePath := whichClaudeBinary()
 
 	for _, s := range saved {
+		if tmuxSessionExists(s.TmuxSession) {
+			fmt.Fprintf(os.Stderr, "  skip %s: already exists\n", s.TmuxSession)
+			continue
+		}
+
 		cwd := FindSessionCWD(s.SessionID)
 		if cwd == "" || !ValidateCWD(cwd) {
 			fmt.Fprintf(os.Stderr, "  skip %s (%s): bad cwd\n", s.TmuxSession, s.SessionID[:min(8, len(s.SessionID))])
 			continue
 		}
 
-		sessionName := uniqueTmuxName(s.TmuxSession)
 		envVar := fmt.Sprintf("RECON_RESUMED_FROM=%s", s.SessionID)
 
 		cmd := exec.Command("tmux",
-			"new-session", "-d", "-s", sessionName, "-c", cwd,
+			"new-session", "-d", "-s", s.TmuxSession, "-c", cwd,
 			"-e", envVar,
 			claudePath, "--resume", s.SessionID,
 		)
@@ -100,7 +104,7 @@ func RestoreSessions() {
 			fmt.Fprintf(os.Stderr, "  fail %s: %v\n", s.TmuxSession, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "  restored %s (%s)\n", sessionName, s.SessionID[:min(8, len(s.SessionID))])
+		fmt.Fprintf(os.Stderr, "  restored %s (%s)\n", s.TmuxSession, s.SessionID[:min(8, len(s.SessionID))])
 	}
 }
 
@@ -116,14 +120,6 @@ func whichClaudeBinary() string {
 	return path
 }
 
-func uniqueTmuxName(base string) string {
-	if exec.Command("tmux", "has-session", "-t", base).Run() != nil {
-		return base
-	}
-	for n := 2; ; n++ {
-		candidate := fmt.Sprintf("%s-%d", base, n)
-		if exec.Command("tmux", "has-session", "-t", candidate).Run() != nil {
-			return candidate
-		}
-	}
+func tmuxSessionExists(name string) bool {
+	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
 }
