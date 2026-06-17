@@ -85,7 +85,6 @@ func main() {
 	launchCmd.Flags().BoolVar(&launchWorktree, "worktree", false, "Create a git worktree")
 
 	var resumeID, resumeName string
-	var resumeNoAttach bool
 	resumeCmd := &cobra.Command{
 		Use:   "resume",
 		Short: "Resume a past session (interactive picker, or by ID)",
@@ -102,9 +101,7 @@ func main() {
 				if err != nil {
 					return err
 				}
-				if !resumeNoAttach {
-					client.SwitchToPane(sess)
-				}
+				client.SwitchToPane(sess)
 				fmt.Fprintf(os.Stderr, "Resumed in session: %s\n", sess)
 				return nil
 			}
@@ -123,15 +120,16 @@ func main() {
 	}
 	resumeCmd.Flags().StringVar(&resumeID, "id", "", "Session ID to resume directly")
 	resumeCmd.Flags().StringVar(&resumeName, "name", "", "Custom tmux session name")
-	resumeCmd.Flags().BoolVar(&resumeNoAttach, "no-attach", false, "Don't attach after resuming")
 
+	var serverRestore bool
 	serverCmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run a background server that caches session data",
 		Run: func(cmd *cobra.Command, args []string) {
-			server.RunServer()
+			server.RunServer(serverRestore)
 		},
 	}
+	serverCmd.Flags().BoolVar(&serverRestore, "restore", false, "Restore sessions from saved state before starting")
 
 	rootCmd.AddCommand(newCmd, launchCmd, resumeCmd, serverCmd)
 

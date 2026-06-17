@@ -34,7 +34,11 @@ func SerializeSessions(sessions []*Session) []byte {
 	return buf
 }
 
-func RunServer() {
+func RunServer(restore bool) {
+	if restore {
+		RestoreSessions()
+	}
+
 	path := SocketPath()
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	os.Remove(path)
@@ -125,6 +129,7 @@ func RunServer() {
 					pollCount, pollMs, len(sessions))
 
 				broadcast(sessions)
+				WriteSessionState(sessions)
 
 				if pollCount%20 == 0 {
 					liveIDs := make(map[string]bool)

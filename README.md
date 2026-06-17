@@ -112,6 +112,15 @@ Nested under each agent, grecon shows its active child tasks:
 | `grecon launch` | Create a session (background, scriptable) |
 | `grecon resume` | Interactive picker to resume a past session |
 | `grecon server` | Start the background server |
+| `grecon server --restore` | Start the server and restore sessions from saved state |
+
+### `grecon server` flags
+
+```
+--restore    Restore sessions from saved state before starting
+```
+
+The server continuously saves which Claude sessions are running and which tmux sessions they belong to. After a reboot, `grecon server --restore` recreates all your tmux sessions and resumes each Claude conversation where it left off.
 
 ### `grecon launch` flags
 
@@ -129,7 +138,6 @@ Nested under each agent, grecon shows its active child tasks:
 ```
 --id         Resume a specific session ID directly
 --name       Custom tmux session name for the resumed session
---no-attach  Don't attach after resuming
 ```
 
 ### Keyboard shortcuts (TUI)
