@@ -1,8 +1,8 @@
 # grecon
 
-A tmux-native dashboard for managing [Claude Code](https://claude.ai/claude-code) sessions.
+A workstream management tool for [Claude Code](https://claude.ai/claude-code) agents running in tmux.
 
-Run multiple Claude Code instances in tmux, then manage them all from one place — see what each agent is working on, which ones need input, jump between them, and spawn or resume sessions.
+Run multiple Claude Code instances across tmux sessions, then manage them all from one place — see what each agent is working on, which ones need input, jump between them, spawn new sessions, and resume past work after a reboot.
 
 ```
 +- grecon -- Claude Code Sessions ----------------------------------------+
@@ -34,11 +34,13 @@ Requires Go 1.21+ and tmux.
 
 ### 2. Start the server
 
-The server runs in the background and does all the heavy lifting — discovering sessions, parsing logs, generating summaries.
+The server runs in the background and does all the heavy lifting — discovering sessions, syncing state to the database, generating summaries.
 
 ```bash
 grecon server &
 ```
+
+On first run, the server creates `~/.grecon/grecon.db` (SQLite) and imports any existing state from legacy file-based storage.
 
 ### 3. Add tmux keybindings
 
@@ -70,19 +72,27 @@ Or launch headlessly:
 grecon launch --cwd ~/repos/myapp --worktree --attach
 ```
 
-### 5. Resume a past session
+### 5. Resume a past workstream
 
 ```bash
 grecon resume
 ```
 
-This opens a picker showing all your past Claude Code sessions — pick one to resume it in a new tmux session. You can also resume by ID:
+This opens a picker showing all your past workstreams — pick one to resume it in a new tmux session with all its Claude conversations restored. You can also resume by ID:
 
 ```bash
 grecon resume --id <session-id>
 ```
 
-### 6. Open the dashboard
+### 6. Restore after a reboot
+
+```bash
+grecon server --restore &
+```
+
+The server continuously tracks which workstreams are active. After a reboot, `--restore` recreates all tmux sessions and resumes every Claude conversation where it left off. Summaries appear instantly from the database — no waiting for regeneration.
+
+### 7. Open the dashboard
 
 Press your tmux prefix + `g` (or run `grecon` directly). You'll see all your running Claude Code sessions, their status, and what they're working on. Press `i` to jump straight to whichever agent needs your attention.
 
@@ -110,17 +120,15 @@ Nested under each agent, grecon shows its active child tasks:
 | `grecon` | Open the TUI dashboard |
 | `grecon new [name]` | Interactive form to create a new session |
 | `grecon launch` | Create a session (background, scriptable) |
-| `grecon resume` | Interactive picker to resume a past session |
+| `grecon resume` | Interactive picker to resume a past workstream |
 | `grecon server` | Start the background server |
-| `grecon server --restore` | Start the server and restore sessions from saved state |
+| `grecon server --restore` | Start the server and restore active workstreams |
 
 ### `grecon server` flags
 
 ```
---restore    Restore sessions from saved state before starting
+--restore    Restore active workstreams from the database before starting
 ```
-
-The server continuously saves which Claude sessions are running and which tmux sessions they belong to. After a reboot, `grecon server --restore` recreates all your tmux sessions and resumes each Claude conversation where it left off.
 
 ### `grecon launch` flags
 
@@ -153,15 +161,53 @@ The server continuously saves which Claude sessions are running and which tmux s
 
 ## How it works
 
-grecon runs a persistent background server that polls tmux every ~2 seconds. The TUI connects over a Unix socket and gets instant updates via a streaming protocol.
+### Data model
 
-### Session discovery
+All state lives in a SQLite database at `~/.grecon/grecon.db`. The schema has three tables:
 
 ```
-tmux list-panes (pane_pid)     →  find Claude processes in tmux
-~/.claude/sessions/{PID}.json  →  map PID to JSONL session ID
-~/.claude/projects/*/*.jsonl   →  parse tokens, model, status, activity
-tmux capture-pane              →  read the Claude Code status bar
+workstreams
+  id            integer primary key
+  worktree      text (git worktree path, if any)
+  playwright    integer (whether playwright is configured)
+  active        integer (1 if currently running, 0 if not)
+
+tmux_sessions
+  id            integer primary key
+  workstream_id integer (foreign key -> workstreams)
+  tmux_id       text (the actual tmux session name)
+  display_name  text (the human-readable name shown in grecon)
+
+claude_sessions
+  id            integer primary key
+  workstream_id integer (foreign key -> workstreams)
+  session_id    text (Claude session UUID, matches the JSONL filename)
+  display_name  text (the fun name, e.g. "ripe-bolt")
+  summary       text (last Haiku-generated summary)
+```
+
+A **workstream** groups a tmux session with one or more Claude sessions. It's an internal concept -- users see tmux session names and Claude names, not workstreams. The `active` flag is set by the server's poll loop: if a workstream's tmux session is alive, it's active.
+
+The database uses WAL mode for concurrent reads and writes. Schema changes are managed by a migration system (`schema_version` table) so future updates apply automatically on server startup.
+
+### Server loop
+
+The server polls every 500ms:
+
+1. Discovers all live Claude sessions in tmux
+2. Parses JSONL logs incrementally (only new bytes since last read)
+3. Generates AI summaries via Haiku (lazily, only when content changes)
+4. Syncs the live state to SQLite (active flags, names, summaries)
+5. Broadcasts the full session list to connected TUI clients via Unix socket
+6. Every 10 seconds: prunes dead sessions (JSONL files deleted by Claude) from the database
+
+Session discovery:
+
+```
+tmux list-panes (pane_pid)     ->  find Claude processes in tmux
+~/.claude/sessions/{PID}.json  ->  map PID to JSONL session ID
+~/.claude/projects/*/*.jsonl   ->  parse tokens, model, status, activity
+tmux capture-pane              ->  read the Claude Code status bar
 ```
 
 ### Status detection
@@ -170,38 +216,49 @@ Status is determined by reading the last lines of each Claude Code tmux pane:
 
 | Pane content | Status |
 |---|---|
-| Contains `esc to interrupt` | **Working** |
+| Spinner character + `...` | **Working** |
 | Contains `Esc to cancel` | **Input** |
 | No tokens yet | **New** |
 | Anything else | **Idle** |
 
 ### Background task detection
 
-grecon parses the JSONL conversation log to find Bash and Monitor tool calls that are running in the background. It then checks the process tree to verify they're still alive. Completed tasks (identified by `<task-notification>` entries) are filtered out.
+grecon parses the JSONL conversation log to find Bash and Monitor tool calls running in the background. It checks the process tree to verify they're still alive. Completed tasks (identified by `<task-notification>` entries) use full command matching to avoid false positives from similar commands.
 
 ### AI summaries
 
-Each session gets a one-line summary generated by Haiku. The server extracts recent activity from the JSONL (text + tool usage since the last user message) and calls `claude -p --model haiku` to summarize it. Summaries update lazily — only when the JSONL content changes.
+Each session gets a one-line summary generated by Haiku. The server extracts recent activity from the JSONL and calls `claude -p --model haiku` to summarize it. Summaries update lazily and are persisted in the database so they survive server restarts.
+
+### Restore flow
+
+When started with `--restore`, the server:
+
+1. Opens the database and runs any pending migrations
+2. Queries all workstreams where `active = 1`
+3. Loads cached summaries into memory for instant display
+4. For each active workstream: creates a tmux session and launches `claude --resume` for each Claude session
+5. Begins normal polling (the restored sessions are picked up on the first tick)
+
+The database is written every poll tick, so the server can be killed at any time without data loss.
 
 ## Architecture
 
 ```
-+-----------+     Unix socket      +------------------+
-|           |<-------------------->|                  |
++-----------+     Unix socket      +------------------+     SQLite
+|           |<-------------------->|                  |<---------->  ~/.grecon/grecon.db
 |    TUI    |  streaming JSON      |     Server       |
-|  (grecon) |  frames              |  (grecon server) |
-|           |                      |                  |
+|  (grecon) |  frames              |  (grecon server) |     tmux
+|           |                      |                  |<---------->  session discovery
 +-----------+                      |  polls every     |
-                                   |  ~2 seconds:     |
-                                   |  - tmux panes    |
-                                   |  - process tree  |
-                                   |  - JSONL files   |
-                                   |  - Haiku for     |
-                                   |    summaries     |
+                                   |  500ms:          |     JSONL
++-----------+                      |  - tmux panes    |<---------->  ~/.claude/projects/
+|  resume   |------- SQLite ------>|  - process tree  |
+|  picker   |                      |  - JSONL files   |     Haiku
++-----------+                      |  - AI summaries  |<---------->  claude -p --model haiku
                                    +------------------+
 ```
 
-The server does all the expensive work — scanning tmux, reading process trees, parsing JSONL logs, calling Haiku — once every ~2 seconds, then serves cached results instantly to any connected client.
+The server does all the expensive work -- scanning tmux, reading process trees, parsing JSONL logs, calling Haiku, syncing to SQLite -- then serves cached results instantly to any connected client.
 
 ## License
 
