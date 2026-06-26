@@ -12,6 +12,7 @@ import (
 type SavedSession struct {
 	SessionID   string `json:"session_id"`
 	TmuxSession string `json:"tmux_session"`
+	Summary     string `json:"summary,omitempty"`
 }
 
 func stateFilePath() string {
@@ -37,6 +38,7 @@ func WriteSessionState(sessions []*Session) {
 		saved = append(saved, SavedSession{
 			SessionID:   sid,
 			TmuxSession: s.TmuxSession,
+			Summary:     s.Summary,
 		})
 	}
 
@@ -78,6 +80,14 @@ func RestoreSessions() {
 	}
 
 	fmt.Fprintf(os.Stderr, "restore: restoring %d session(s)\n", len(saved))
+
+	globalSummary.mu.Lock()
+	for _, s := range saved {
+		if s.Summary != "" {
+			globalSummary.summaries[s.SessionID] = s.Summary
+		}
+	}
+	globalSummary.mu.Unlock()
 
 	claudePath := whichClaudeBinary()
 
