@@ -26,6 +26,8 @@ var migrations = []string{
 		session_id TEXT NOT NULL UNIQUE,
 		display_name TEXT NOT NULL DEFAULT ''
 	);`,
+
+	`ALTER TABLE claude_sessions ADD COLUMN summary TEXT NOT NULL DEFAULT '';`,
 }
 
 func migrate(d *sql.DB) error {

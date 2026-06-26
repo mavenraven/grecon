@@ -144,12 +144,25 @@ func RunServer(restore bool) {
 				broadcast(sessions)
 				WriteSessionState(sessions)
 
+				var liveSessions []db.LiveSession
+				for _, s := range sessions {
+					liveSessions = append(liveSessions, db.LiveSession{
+						SessionID:   s.SessionID,
+						TmuxSession: s.TmuxSession,
+						ClaudeName:  s.ClaudeName,
+						JSONLPath:   s.JSONLPath,
+						Summary:     s.Summary,
+					})
+				}
+				db.SyncLiveSessions(d, liveSessions)
+
 				if pollCount%20 == 0 {
 					liveIDs := make(map[string]bool)
 					for _, s := range sessions {
 						liveIDs[s.SessionID] = true
 					}
 					go RefreshResumeCache(liveIDs)
+					go db.PruneDeadSessions(d)
 				}
 			}
 		}
