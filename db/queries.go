@@ -287,3 +287,10 @@ func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 		summary, sessionID,
 	)
 }
+
+func LoadSummaryDB(d *sql.DB, sessionID string) string {
+	var summary string
+	d.QueryRow(`SELECT summary FROM claude_sessions WHERE session_id = ?`,
+		sessionID).Scan(&summary)
+	return summary
+}

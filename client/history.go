@@ -8,56 +8,37 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"grecon/server"
+	"grecon/db"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-func findResumableSessions() []server.ResumeEntry {
-	cached := server.ReadResumeCache()
-	if cached == nil {
+type resumableWorkstream struct {
+	WorkstreamID int64
+	TmuxName     string
+	Sessions     []db.ClaudeSessionInfo
+}
+
+func findResumableWorkstreams() []resumableWorkstream {
+	d := db.Get()
+	if d == nil {
 		return nil
 	}
-	liveIDs := getLiveSessionIDs()
-	var entries []server.ResumeEntry
-	for _, e := range cached {
-		if liveIDs[e.SessionID] {
+	workstreams := db.InactiveWorkstreams(d)
+	var result []resumableWorkstream
+	for _, ws := range workstreams {
+		if len(ws.Sessions) == 0 {
 			continue
 		}
-		entries = append(entries, server.ResumeEntry{
-			SessionID:  e.SessionID,
-			CWD:        e.CWD,
-			Branch:     e.Branch,
-			Model:      e.Model,
-			Tokens:     e.Tokens,
-			LastActive: e.LastActive,
-			ProjectDir: e.ProjectDir,
+		result = append(result, resumableWorkstream{
+			WorkstreamID: ws.WorkstreamID,
+			TmuxName:     ws.DisplayName,
+			Sessions:     ws.Sessions,
 		})
 	}
-	return entries
-}
-
-func getLiveSessionIDs() map[string]bool {
-	sessions := server.TryFetch()
-	ids := make(map[string]bool)
-	for _, s := range sessions {
-		ids[s.SessionID] = true
-	}
-	return ids
-}
-
-func dirName(path string) string {
-	return filepath.Base(path)
-}
-
-func projectName(cwd string) string {
-	if idx := strings.Index(cwd, "/.claude/worktrees/"); idx >= 0 {
-		return filepath.Base(cwd[:idx])
-	}
-	return filepath.Base(cwd)
+	return result
 }
 
 func deleteSession(sessionID, projectDir, cwd string) {
@@ -112,40 +93,14 @@ func readSessionCWD(path string) string {
 	return ""
 }
 
-func resumeSessionName(e server.ResumeEntry) string {
-	if name := server.LoadTmuxName(e.SessionID); name != "" {
-		return name
-	}
-	return dirName(e.CWD)
-}
-
 func execRun(name string, args ...string) {
 	exec.Command(name, args...).Run()
-}
-
-func formatRelative(ts string) string {
-	t, err := time.Parse(time.RFC3339Nano, ts)
-	if err != nil {
-		t, err = time.Parse(time.RFC3339, ts)
-		if err != nil {
-			return ts
-		}
-	}
-	diff := time.Since(t)
-	if diff.Minutes() < 1 {
-		return "just now"
-	} else if diff.Minutes() < 60 {
-		return fmt.Sprintf("%dm ago", int(diff.Minutes()))
-	} else if diff.Hours() < 24 {
-		return fmt.Sprintf("%dh ago", int(diff.Hours()))
-	}
-	return fmt.Sprintf("%dd ago", int(diff.Hours()/24))
 }
 
 // --- Resume picker TUI ---
 
 type resumeModel struct {
-	entries       []server.ResumeEntry
+	entries       []resumableWorkstream
 	selected      int
 	confirmDelete bool
 	result        *resumeResult
@@ -160,7 +115,7 @@ type resumeResult struct {
 
 func newResumeModel() resumeModel {
 	return resumeModel{
-		entries: findResumableSessions(),
+		entries: findResumableWorkstreams(),
 	}
 }
 
@@ -181,7 +136,9 @@ func (m resumeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y":
 				if m.selected < len(m.entries) {
 					e := m.entries[m.selected]
-					go deleteSession(e.SessionID, e.ProjectDir, e.CWD)
+					for _, cs := range e.Sessions {
+						go deleteSession(cs.SessionID, "", "")
+					}
 					m.entries = append(m.entries[:m.selected], m.entries[m.selected+1:]...)
 					if len(m.entries) == 0 {
 						m.selected = 0
@@ -210,9 +167,11 @@ func (m resumeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(m.entries) > 0 && m.selected < len(m.entries) {
 				e := m.entries[m.selected]
-				m.result = &resumeResult{
-					sessionID: e.SessionID,
-					name:      resumeSessionName(e),
+				if len(e.Sessions) > 0 {
+					m.result = &resumeResult{
+						sessionID: e.Sessions[0].SessionID,
+						name:      e.TmuxName,
+					}
 				}
 			}
 			return m, tea.Quit
@@ -239,32 +198,14 @@ func (m resumeModel) View() string {
 	innerW := w - 2
 
 	colNum := 4
-	colTmux := 24
-	colClaude := 20
-	colModel := 12
-	colActivity := 14
-
-	gitColWidth := 10
-	for _, e := range m.entries {
-		project := projectName(e.CWD)
-		gitLen := len(project)
-		if e.Branch != "" {
-			gitLen += 2 + len(e.Branch)
-		}
-		if gitLen > gitColWidth {
-			gitColWidth = gitLen
-		}
-	}
-	gitColWidth += 2
-	remaining := innerW - colNum - colTmux - colClaude - colModel - colActivity
-	if gitColWidth > remaining {
-		gitColWidth = remaining
-	}
-	if gitColWidth < 20 {
-		gitColWidth = 20
+	colTmux := 28
+	colClaude := 24
+	colSummary := innerW - colNum - colTmux - colClaude
+	if colSummary < 20 {
+		colSummary = 20
 	}
 
-	title := " Resume Session "
+	title := " Resume Workstream "
 	topBorder := "┌" + title
 	rem := innerW - len(title)
 	if rem > 0 {
@@ -289,11 +230,9 @@ func (m resumeModel) View() string {
 	} else {
 		header := buildRow([]colSpec{
 			{colNum, " # "},
-			{colTmux, "Tmux"},
+			{colTmux, "Session"},
 			{colClaude, "Claude"},
-			{gitColWidth, "Git(Project::Branch)"},
-			{colModel, "Model"},
-			{colActivity, "Last Active"},
+			{colSummary, "Summary"},
 		})
 		b.WriteString("│")
 		b.WriteString(headerStyle.Render(fitToWidth(header, innerW)))
@@ -308,38 +247,32 @@ func (m resumeModel) View() string {
 			if i >= maxRows {
 				break
 			}
-			tmuxName := server.LoadTmuxName(e.SessionID)
+			tmuxName := e.TmuxName
 			if tmuxName == "" {
 				tmuxName = dimStyle.Render("—")
 			}
-			claudeName := server.LoadClaudeName(e.SessionID)
-			if claudeName == "" {
-				sid := e.SessionID
-				if len(sid) > 8 {
-					sid = sid[:8]
+
+			var claudeNames []string
+			var summary string
+			for _, cs := range e.Sessions {
+				if cs.DisplayName != "" {
+					claudeNames = append(claudeNames, cs.DisplayName)
 				}
-				claudeName = dimStyle.Render(sid)
+			}
+			claudeDisplay := strings.Join(claudeNames, ", ")
+			if claudeDisplay == "" {
+				claudeDisplay = dimStyle.Render("—")
 			}
 
-			project := projectName(e.CWD)
-			gitCol := project
-			if e.Branch != "" {
-				gitCol = project + dimStyle.Render("::") + greenStyle.Render(e.Branch)
+			d := db.Get()
+			if d != nil && len(e.Sessions) > 0 {
+				summary = db.LoadSummaryDB(d, e.Sessions[0].SessionID)
 			}
-
-			modelDisplay := "—"
-			if e.Model != "" {
-				modelDisplay = server.ModelDisplayName(e.Model)
-			}
-
-			lastActive := formatRelative(e.LastActive)
 
 			row := padCol(fmt.Sprintf(" %d ", i+1), colNum) +
 				padCol(tmuxName, colTmux) +
-				padCol(claudeName, colClaude) +
-				padCol(gitCol, gitColWidth) +
-				padCol(modelDisplay, colModel) +
-				padCol(lastActive, colActivity)
+				padCol(claudeDisplay, colClaude) +
+				padCol(summary, colSummary)
 
 			plainLen := visibleWidth(row)
 			if plainLen < innerW {

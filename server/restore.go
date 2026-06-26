@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"grecon/db"
 )
 
 type SavedSession struct {
@@ -58,64 +60,76 @@ func WriteSessionState(sessions []*Session) {
 }
 
 func RestoreSessions() {
-	path := stateFilePath()
-	if path == "" {
+	d := db.Get()
+	if d == nil {
+		fmt.Fprintf(os.Stderr, "restore: no database\n")
 		return
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "restore: no saved state\n")
+	workstreams := db.ActiveWorkstreams(d)
+	if len(workstreams) == 0 {
+		fmt.Fprintf(os.Stderr, "restore: no active workstreams to restore\n")
 		return
 	}
 
-	var saved []SavedSession
-	if json.Unmarshal(data, &saved) != nil {
-		fmt.Fprintf(os.Stderr, "restore: corrupt state file\n")
-		return
-	}
-
-	if len(saved) == 0 {
-		fmt.Fprintf(os.Stderr, "restore: no sessions to restore\n")
-		return
-	}
-
-	fmt.Fprintf(os.Stderr, "restore: restoring %d session(s)\n", len(saved))
+	fmt.Fprintf(os.Stderr, "restore: restoring %d workstream(s)\n", len(workstreams))
 
 	globalSummary.mu.Lock()
-	for _, s := range saved {
-		if s.Summary != "" {
-			globalSummary.summaries[s.SessionID] = s.Summary
+	for _, ws := range workstreams {
+		for _, cs := range ws.Sessions {
+			summary := db.LoadSummaryDB(d, cs.SessionID)
+			if summary != "" {
+				globalSummary.summaries[cs.SessionID] = summary
+			}
 		}
 	}
 	globalSummary.mu.Unlock()
 
 	claudePath := whichClaudeBinary()
 
-	for _, s := range saved {
-		if tmuxSessionExists(s.TmuxSession) {
-			fmt.Fprintf(os.Stderr, "  skip %s: already exists\n", s.TmuxSession)
+	for _, ws := range workstreams {
+		if tmuxSessionExists(ws.DisplayName) {
+			fmt.Fprintf(os.Stderr, "  skip %s: already exists\n", ws.DisplayName)
 			continue
 		}
 
-		cwd := FindSessionCWD(s.SessionID)
+		if len(ws.Sessions) == 0 {
+			continue
+		}
+
+		first := ws.Sessions[0]
+		cwd := FindSessionCWD(first.SessionID)
 		if cwd == "" || !ValidateCWD(cwd) {
-			fmt.Fprintf(os.Stderr, "  skip %s (%s): bad cwd\n", s.TmuxSession, s.SessionID[:min(8, len(s.SessionID))])
+			fmt.Fprintf(os.Stderr, "  skip %s (%s): bad cwd\n", ws.DisplayName, first.SessionID[:min(8, len(first.SessionID))])
 			continue
 		}
 
-		envVar := fmt.Sprintf("RECON_RESUMED_FROM=%s", s.SessionID)
+		envVar := fmt.Sprintf("RECON_RESUMED_FROM=%s", first.SessionID)
 
 		cmd := exec.Command("tmux",
-			"new-session", "-d", "-s", s.TmuxSession, "-c", cwd,
+			"new-session", "-d", "-s", ws.DisplayName, "-c", cwd,
 			"-e", envVar,
-			claudePath, "--resume", s.SessionID,
+			claudePath, "--resume", first.SessionID,
 		)
 		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "  fail %s: %v\n", s.TmuxSession, err)
+			fmt.Fprintf(os.Stderr, "  fail %s: %v\n", ws.DisplayName, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "  restored %s (%s)\n", s.TmuxSession, s.SessionID[:min(8, len(s.SessionID))])
+		fmt.Fprintf(os.Stderr, "  restored %s (%s)\n", ws.DisplayName, first.SessionID[:min(8, len(first.SessionID))])
+
+		for _, cs := range ws.Sessions[1:] {
+			csCwd := FindSessionCWD(cs.SessionID)
+			if csCwd == "" || !ValidateCWD(csCwd) {
+				csCwd = cwd
+			}
+			csEnv := fmt.Sprintf("RECON_RESUMED_FROM=%s", cs.SessionID)
+			exec.Command("tmux",
+				"new-window", "-t", ws.DisplayName, "-c", csCwd,
+				"-e", csEnv,
+				claudePath, "--resume", cs.SessionID,
+			).Run()
+			fmt.Fprintf(os.Stderr, "  restored %s window (%s)\n", ws.DisplayName, cs.SessionID[:min(8, len(cs.SessionID))])
+		}
 	}
 }
 
