@@ -21,9 +21,9 @@ type Command struct {
 func CommandSocketPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "/tmp/.recon/grecon-cmd.sock"
+		return "/tmp/.grecon/grecon-cmd.sock"
 	}
-	return filepath.Join(home, ".recon", "grecon-cmd.sock")
+	return filepath.Join(home, ".grecon", "grecon-cmd.sock")
 }
 
 func SendCommand(cmd Command) error {

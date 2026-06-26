@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"grecon/db"
 )
 
 const maxLineBytes = 10 * 1024 * 1024
@@ -995,11 +997,13 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			projName, relDir, branch := gitProjectInfo(cwd)
 			rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 			status := debounceStatus(sessionID, rawStatus)
-			SaveTmuxName(sessionID, live.tmuxSession)
-			saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
+			if d := db.Get(); d != nil {
+					db.SaveTmuxNameDB(d, sessionID, live.tmuxSession)
+				}
+			saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 			subagents := discoverSubagents(path)
-			claudeName := LoadClaudeName(sessionID)
+			claudeName := loadClaudeNameDB(sessionID)
 
 			results[idx] = &Session{
 				SessionID:         sessionID,
@@ -1102,11 +1106,13 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				projName, relDir, branch := gitProjectInfo(cwd)
 				rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 				status := debounceStatus(sessionID, rawStatus)
-				SaveTmuxName(sessionID, live.tmuxSession)
-				saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
+				if d := db.Get(); d != nil {
+					db.SaveTmuxNameDB(d, sessionID, live.tmuxSession)
+				}
+				saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 				subagents := discoverSubagents(resolvedPath)
-				claudeName := LoadClaudeName(sessionID)
+				claudeName := loadClaudeNameDB(sessionID)
 
 				unmatchedResults[idx] = &Session{
 					SessionID:         sessionID,
@@ -1135,11 +1141,13 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					PendingBgCalls:    info.pendingBgCalls,
 				}
 			} else {
-				SaveTmuxName(sessionID, live.tmuxSession)
-				saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
+				if d := db.Get(); d != nil {
+					db.SaveTmuxNameDB(d, sessionID, live.tmuxSession)
+				}
+				saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 				projName, relDir, branch := gitProjectInfo(live.paneCWD)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
-				claudeName := LoadClaudeName(sessionID)
+				claudeName := loadClaudeNameDB(sessionID)
 
 				unmatchedResults[idx] = &Session{
 					SessionID:   sessionID,
@@ -1644,75 +1652,21 @@ func discoverSubagents(jsonlPath string) []*Subagent {
 	return subagents
 }
 
-func reconDir(subdir string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
+func loadClaudeNameDB(sessionID string) string {
+	d := db.Get()
+	if d == nil {
 		return ""
 	}
-	return filepath.Join(home, ".recon", subdir)
+	return db.LoadClaudeNameDB(d, sessionID)
 }
 
-func SaveTmuxName(sessionID, tmuxName string) {
-	if strings.HasPrefix(sessionID, "tmux-") {
-		return
-	}
-	dir := reconDir("tmux-names")
-	if dir == "" {
-		return
-	}
-	path := filepath.Join(dir, sessionID)
-	existing, _ := os.ReadFile(path)
-	if strings.TrimSpace(string(existing)) == tmuxName {
-		return
-	}
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(path, []byte(tmuxName), 0o644)
-}
-
-func LoadTmuxName(sessionID string) string {
-	dir := reconDir("tmux-names")
-	if dir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(dir, sessionID))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func SaveClaudeName(sessionID, claudeName string) {
-	if strings.HasPrefix(sessionID, "tmux-") {
-		return
-	}
-	dir := reconDir("claude-names")
-	if dir == "" {
-		return
-	}
-	path := filepath.Join(dir, sessionID)
-	if fileExists(path) {
-		return
-	}
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(path, []byte(claudeName), 0o644)
-}
-
-func LoadClaudeName(sessionID string) string {
-	dir := reconDir("claude-names")
-	if dir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(dir, sessionID))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func saveClaudeNameFromEnv(sessionID string, env map[string]map[string]string, tmuxSession string) {
+func saveClaudeNameFromEnvDB(sessionID string, env map[string]map[string]string, tmuxSession string) {
 	name := readEnvFromBatch(env, tmuxSession, "RECON_CLAUDE_NAME")
 	if name != "" {
-		SaveClaudeName(sessionID, name)
+		d := db.Get()
+		if d != nil {
+			db.SaveClaudeNameDB(d, sessionID, name)
+		}
 	}
 }
 

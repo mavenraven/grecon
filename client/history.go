@@ -57,10 +57,12 @@ func deleteSession(sessionID, projectDir, cwd string) {
 		for _, subdir := range []string{"file-history", "tasks", "debug", "plans"} {
 			os.RemoveAll(filepath.Join(claude, subdir, sessionID))
 		}
-		recon := filepath.Join(home, ".recon")
-		os.Remove(filepath.Join(recon, "sessions", sessionID))
-		os.Remove(filepath.Join(recon, "tmux-names", sessionID))
-		os.Remove(filepath.Join(recon, "claude-names", sessionID))
+		grecon := filepath.Join(home, ".grecon")
+		os.Remove(filepath.Join(grecon, "sessions", sessionID))
+	}
+
+	if d := db.Get(); d != nil {
+		db.DeleteClaudeSession(d, sessionID)
 	}
 
 	if idx := strings.Index(realCWD, "/.claude/worktrees/"); idx >= 0 {

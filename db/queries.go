@@ -288,6 +288,22 @@ func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 	)
 }
 
+func DeleteClaudeSession(d *sql.DB, sessionID string) {
+	var wsID int64
+	err := d.QueryRow(`SELECT workstream_id FROM claude_sessions WHERE session_id = ?`, sessionID).Scan(&wsID)
+	if err != nil {
+		return
+	}
+	d.Exec(`DELETE FROM claude_sessions WHERE session_id = ?`, sessionID)
+
+	var remaining int
+	d.QueryRow(`SELECT COUNT(*) FROM claude_sessions WHERE workstream_id = ?`, wsID).Scan(&remaining)
+	if remaining == 0 {
+		d.Exec(`DELETE FROM tmux_sessions WHERE workstream_id = ?`, wsID)
+		d.Exec(`DELETE FROM workstreams WHERE id = ?`, wsID)
+	}
+}
+
 func LoadSummaryDB(d *sql.DB, sessionID string) string {
 	var summary string
 	d.QueryRow(`SELECT summary FROM claude_sessions WHERE session_id = ?`,

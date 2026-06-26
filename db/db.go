@@ -16,7 +16,7 @@ func Path() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".recon", "grecon.db")
+	return filepath.Join(home, ".grecon", "grecon.db")
 }
 
 func Open() (*sql.DB, error) {

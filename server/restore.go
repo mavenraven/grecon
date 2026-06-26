@@ -1,63 +1,13 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"grecon/db"
 )
-
-type SavedSession struct {
-	SessionID   string `json:"session_id"`
-	TmuxSession string `json:"tmux_session"`
-	Summary     string `json:"summary,omitempty"`
-	Playwright  bool   `json:"playwright,omitempty"`
-}
-
-func stateFilePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".recon", "session-state.json")
-}
-
-func WriteSessionState(sessions []*Session) {
-	path := stateFilePath()
-	if path == "" {
-		return
-	}
-
-	var saved []SavedSession
-	for _, s := range sessions {
-		if s.TmuxSession == "" || s.JSONLPath == "" {
-			continue
-		}
-		sid := strings.TrimSuffix(filepath.Base(s.JSONLPath), ".jsonl")
-		saved = append(saved, SavedSession{
-			SessionID:   sid,
-			TmuxSession: s.TmuxSession,
-			Summary:     s.Summary,
-		})
-	}
-
-	if saved == nil {
-		saved = []SavedSession{}
-	}
-	data, err := json.Marshal(saved)
-	if err != nil {
-		return
-	}
-	next := path + ".next"
-	if err := os.WriteFile(next, data, 0o644); err != nil {
-		return
-	}
-	os.Rename(next, path)
-}
 
 func RestoreSessions() {
 	d := db.Get()

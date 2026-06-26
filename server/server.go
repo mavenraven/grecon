@@ -17,9 +17,9 @@ import (
 func SocketPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "/tmp/.recon/grecon.sock"
+		return "/tmp/.grecon/grecon.sock"
 	}
-	return filepath.Join(home, ".recon", "grecon.sock")
+	return filepath.Join(home, ".grecon", "grecon.sock")
 }
 
 func SerializeSessions(sessions []*Session) []byte {
@@ -106,8 +106,6 @@ func RunServer(restore bool) {
 		mu.Unlock()
 	}
 
-	go RefreshResumeCache(nil)
-
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -142,7 +140,6 @@ func RunServer(restore bool) {
 					pollCount, pollMs, len(sessions))
 
 				broadcast(sessions)
-				WriteSessionState(sessions)
 
 				var liveSessions []db.LiveSession
 				for _, s := range sessions {
@@ -157,11 +154,6 @@ func RunServer(restore bool) {
 				db.SyncLiveSessions(d, liveSessions)
 
 				if pollCount%20 == 0 {
-					liveIDs := make(map[string]bool)
-					for _, s := range sessions {
-						liveIDs[s.SessionID] = true
-					}
-					go RefreshResumeCache(liveIDs)
 					go db.PruneDeadSessions(d)
 				}
 			}
