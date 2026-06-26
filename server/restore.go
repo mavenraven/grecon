@@ -13,6 +13,7 @@ type SavedSession struct {
 	SessionID   string `json:"session_id"`
 	TmuxSession string `json:"tmux_session"`
 	Summary     string `json:"summary,omitempty"`
+	Playwright  bool   `json:"playwright,omitempty"`
 }
 
 func stateFilePath() string {

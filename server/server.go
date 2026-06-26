@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"grecon/db"
 )
 
 func SocketPath() string {
@@ -35,6 +37,17 @@ func SerializeSessions(sessions []*Session) []byte {
 }
 
 func RunServer(restore bool) {
+	d, err := db.Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer d.Close()
+
+	if err := db.ImportExistingState(d); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to import state: %v\n", err)
+	}
+
 	if restore {
 		RestoreSessions()
 	}
