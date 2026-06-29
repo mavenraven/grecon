@@ -130,12 +130,6 @@ func RunServer() {
 				AttachSummaries(sessions)
 				syncPaneWatcher(pw, sessions)
 
-				for _, s := range sessions {
-					if s.Summary != "" {
-						db.SaveSummaryDB(d, s.SessionID, s.Summary)
-					}
-				}
-
 				fmt.Printf("poll #%d: discover=%dms sessions=%d\n",
 					pollCount, pollMs, len(sessions))
 

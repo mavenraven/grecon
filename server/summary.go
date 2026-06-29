@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"grecon/db"
 )
 
 const (
@@ -22,53 +24,50 @@ const (
 )
 
 type summaryState struct {
-	mu        sync.Mutex
-	summaries map[string]string
-	hashes    map[string]string
-	pending   map[string]bool
+	mu      sync.Mutex
+	hashes  map[string]string
+	pending map[string]bool
 }
 
 var globalSummary = &summaryState{
-	summaries: make(map[string]string),
-	hashes:    make(map[string]string),
-	pending:   make(map[string]bool),
+	hashes:  make(map[string]string),
+	pending: make(map[string]bool),
 }
 
 func AttachSummaries(sessions []*Session) {
+	d := db.Get()
 	for _, s := range sessions {
+		if d != nil && s.SessionID != "" {
+			s.Summary = db.LoadSummaryDB(d, s.SessionID)
+		}
 		if s.JSONLPath != "" {
-			attachSummary(s.SessionID, s.JSONLPath, &s.Summary)
+			maybeRegenerateSummary(s.SessionID, s.JSONLPath)
 		}
 
 		for _, sa := range s.Subagents {
+			if d != nil {
+				sa.Summary = db.LoadSummaryDB(d, "sa:"+sa.AgentID)
+			}
 			if sa.JSONLPath != "" {
-				attachSummary("sa:"+sa.AgentID, sa.JSONLPath, &sa.Summary)
+				maybeRegenerateSummary("sa:"+sa.AgentID, sa.JSONLPath)
 			}
 		}
 	}
 }
 
-func attachSummary(key, jsonlPath string, target *string) {
+func maybeRegenerateSummary(key, jsonlPath string) {
 	activity := extractRecentActivity(jsonlPath)
 	hash := hashEntry(activity)
 
 	globalSummary.mu.Lock()
 	oldHash := globalSummary.hashes[key]
 	isPending := globalSummary.pending[key]
-	*target = globalSummary.summaries[key]
 
-	if hash != oldHash && !isPending {
+	if hash != oldHash && !isPending && activity != "" {
 		globalSummary.hashes[key] = hash
-
-		if activity == "" {
-			globalSummary.summaries[key] = ""
-			*target = ""
-			globalSummary.mu.Unlock()
-		} else {
-			globalSummary.pending[key] = true
-			globalSummary.mu.Unlock()
-			go generateSummary(key, activity)
-		}
+		globalSummary.pending[key] = true
+		globalSummary.mu.Unlock()
+		go generateSummary(key, activity)
 	} else {
 		globalSummary.mu.Unlock()
 	}
@@ -237,10 +236,10 @@ func hashEntry(s string) string {
 	return hex.EncodeToString(h[:8])
 }
 
-func generateSummary(sessionID, text string) {
+func generateSummary(key, text string) {
 	defer func() {
 		globalSummary.mu.Lock()
-		globalSummary.pending[sessionID] = false
+		globalSummary.pending[key] = false
 		globalSummary.mu.Unlock()
 	}()
 
@@ -262,7 +261,7 @@ func generateSummary(sessionID, text string) {
 	cmd.Stderr = io.Discard
 
 	if err := cmd.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "summary for %s: %v\n", sessionID[:8], err)
+		fmt.Fprintf(os.Stderr, "summary for %s: %v\n", key[:min(8, len(key))], err)
 		return
 	}
 
@@ -271,9 +270,10 @@ func generateSummary(sessionID, text string) {
 		return
 	}
 
-	globalSummary.mu.Lock()
-	globalSummary.summaries[sessionID] = summary
-	globalSummary.mu.Unlock()
+	d := db.Get()
+	if d != nil {
+		db.SaveSummaryDB(d, key, summary)
+	}
 
-	fmt.Fprintf(os.Stderr, "summary for %s: %s\n", sessionID[:8], summary)
+	fmt.Fprintf(os.Stderr, "summary for %s: %s\n", key[:min(8, len(key))], summary)
 }
