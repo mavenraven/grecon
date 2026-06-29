@@ -227,7 +227,7 @@ The discovery loop builds the live view for the TUI:
 ### Open questions
 
 - What should happen when a workstream's worktree no longer exists on disk? Delete the workstream? Keep it as inactive? TBD.
-- Currently grecon ignores any Claude sessions not created by grecon (not in the database). We could adopt unmanaged sessions into workstreams automatically, which would make grecon a dashboard for all Claude sessions on the machine. Fairly easy to implement but adds complexity around resumption and lifecycle for sessions grecon didn't create.
+- `grecon adopt` — a command that discovers existing Claude sessions in tmux that grecon doesn't manage, lets the user pick one, and brings it into a workstream. Explicit opt-in instead of automatic adoption. Avoids the complexity of auto-adopting every session on the machine.
 
 ### Pruning (periodic)
 
