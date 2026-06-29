@@ -20,7 +20,7 @@ type ClaudeSessionInfo struct {
 	Active      bool
 }
 
-func CreateWorkstreamDB(d *sql.DB, tmuxSession, claudeName, sessionID, worktree string) {
+func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) {
 	tx, err := d.Begin()
 	if err != nil {
 		return
@@ -37,15 +37,6 @@ func CreateWorkstreamDB(d *sql.DB, tmuxSession, claudeName, sessionID, worktree 
 	_, err = tx.Exec(
 		`INSERT INTO tmux_sessions (workstream_id, tmux_id, display_name) VALUES (?, ?, ?)`,
 		wsID, tmuxID, tmuxSession,
-	)
-	if err != nil {
-		tx.Rollback()
-		return
-	}
-
-	_, err = tx.Exec(
-		`INSERT INTO claude_sessions (workstream_id, session_id, display_name) VALUES (?, ?, ?)`,
-		wsID, sessionID, claudeName,
 	)
 	if err != nil {
 		tx.Rollback()

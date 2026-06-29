@@ -165,6 +165,13 @@ func handleCreateSession(cmd Command) CommandResponse {
 	baseName := sanitizeSessionName(cmd.Name)
 	sessionName := uniqueTmuxName(baseName)
 
+	var worktreePath string
+	if cmd.Worktree {
+		worktreePath = cmd.CWD
+	}
+
+	db.CreateWorkstreamDB(d, sessionName, worktreePath)
+
 	args := []string{"new-session", "-d", "-s", sessionName, "-c", cmd.CWD}
 
 	if cmd.Tags != "" {
@@ -190,72 +197,11 @@ func handleCreateSession(cmd Command) CommandResponse {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("tmux: %v", err)}
 	}
 
-	// Poll until Claude is ready, send a period, wait for session ID
-	sessionID := ""
-	periodSent := false
-	for i := 0; i < 60; i++ {
-		time.Sleep(500 * time.Millisecond)
-		if !periodSent {
-			exec.Command("tmux", "send-keys", "-t", sessionName, ".", "Enter").Run()
-			periodSent = true
-		}
-		sessionID = findSessionIDForTmux(sessionName)
-		if sessionID != "" {
-			break
-		}
-	}
-
-	if sessionID == "" {
-		return CommandResponse{OK: false, Error: "timed out waiting for claude session"}
-	}
-
-	var worktreePath string
 	if cmd.Worktree {
-		worktreePath = cmd.CWD
 		go fixDefaultPath(sessionName)
 	}
 
-	db.CreateWorkstreamDB(d, sessionName, cmd.ClaudeName, sessionID, worktreePath)
-
 	return CommandResponse{OK: true, TmuxSession: sessionName}
-}
-
-func findSessionIDForTmux(tmuxSession string) string {
-	out, err := exec.Command("tmux", "list-panes", "-t", tmuxSession, "-F", "#{pane_pid}").Output()
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		pid := strings.TrimSpace(line)
-		if pid == "" {
-			continue
-		}
-		sessionFile := findSessionFileByPID(pid)
-		if sessionFile != "" {
-			return sessionFile
-		}
-	}
-	return ""
-}
-
-func findSessionFileByPID(pidStr string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	sessionsDir := filepath.Join(home, ".claude", "sessions")
-	path := filepath.Join(sessionsDir, pidStr+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var sess struct {
-		SessionID string `json:"sessionId"`
-	}
-	if json.Unmarshal(data, &sess) == nil && sess.SessionID != "" {
-		return sess.SessionID
-	}
-	return ""
 }
 
 func handleReactivateSession(cmd Command) CommandResponse {

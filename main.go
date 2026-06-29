@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -92,7 +93,24 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(newCmd, launchCmd, serverCmd)
+	jsonCmd := &cobra.Command{
+		Use:   "json",
+		Short: "Print current session state as JSON",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessions := server.TryFetch()
+			if sessions == nil {
+				return fmt.Errorf("grecon server is not running")
+			}
+			data, err := json.MarshalIndent(sessions, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(data))
+			return nil
+		},
+	}
+
+	rootCmd.AddCommand(newCmd, launchCmd, serverCmd, jsonCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

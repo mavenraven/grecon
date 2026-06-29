@@ -470,6 +470,8 @@ func formatStatus(status server.SessionStatus) string {
 		dot, label, ansi = "●", "Input", "33"
 	case server.StatusInactive:
 		dot, label, ansi = "○", "Off", "90"
+	case server.StatusDeleted:
+		dot, label, ansi = "○", "Gone", "31"
 	}
 	return ansiColor(ansi, dot+" "+label)
 }

@@ -170,7 +170,7 @@ func RunServer() {
 				sessions = discoverTmuxSessions(prev)
 				pollMs := time.Since(pollStart).Milliseconds()
 
-				sessions = appendInactiveSessions(d, sessions)
+				sessions = reconcileDBWithLive(d, sessions)
 
 				prev = make(map[string]*Session)
 				for _, s := range sessions {
@@ -186,7 +186,6 @@ func RunServer() {
 				broadcast(sessions)
 
 				if pollCount%10 == 0 {
-					markInactiveSessions(d, sessions)
 					go db.PruneDeadSessions(d)
 				}
 			}
@@ -321,43 +320,74 @@ func seedFromDB(d *sql.DB) []*Session {
 	return sessions
 }
 
-func appendInactiveSessions(d *sql.DB, liveSessions []*Session) []*Session {
-	liveIDs := make(map[string]bool)
+func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
+	liveByTmux := make(map[string]map[string]bool)
 	for _, s := range liveSessions {
-		liveIDs[s.SessionID] = true
+		if s.TmuxSession == "" {
+			continue
+		}
+		if liveByTmux[s.TmuxSession] == nil {
+			liveByTmux[s.TmuxSession] = make(map[string]bool)
+		}
+		liveByTmux[s.TmuxSession][s.SessionID] = true
 	}
 
 	workstreams := db.AllWorkstreams(d)
 	for _, ws := range workstreams {
+		liveIDs := liveByTmux[ws.DisplayName]
+
+		// Add new live sessions not yet in DB
+		if liveIDs != nil {
+			knownIDs := make(map[string]bool)
+			for _, cs := range ws.Sessions {
+				knownIDs[cs.SessionID] = true
+			}
+			for sid := range liveIDs {
+				if !knownIDs[sid] {
+					db.AddClaudeSession(d, ws.WorkstreamID, sid, "")
+				}
+			}
+		}
+
+		// Mark active sessions that are no longer live
 		for _, cs := range ws.Sessions {
-			if !cs.Active && !liveIDs[cs.SessionID] {
-				liveSessions = append(liveSessions, &Session{
-					SessionID:   cs.SessionID,
-					TmuxSession: ws.DisplayName,
-					ClaudeName:  cs.DisplayName,
-					Status:      StatusInactive,
-				})
+			if cs.Active && (liveIDs == nil || !liveIDs[cs.SessionID]) {
+				db.SetSessionActive(d, cs.SessionID, false)
+			}
+			// Mark live sessions as active
+			if !cs.Active && liveIDs != nil && liveIDs[cs.SessionID] {
+				db.SetSessionActive(d, cs.SessionID, true)
 			}
 		}
 	}
+
+	// Re-read workstreams to get updated state and append non-live sessions
+	workstreams = db.AllWorkstreams(d)
+	for _, ws := range workstreams {
+		liveIDs := liveByTmux[ws.DisplayName]
+		for _, cs := range ws.Sessions {
+			if liveIDs != nil && liveIDs[cs.SessionID] {
+				continue
+			}
+			status := StatusInactive
+			if cs.SessionID != "" && !jsonlExistsForSession(cs.SessionID) {
+				status = StatusDeleted
+			}
+			liveSessions = append(liveSessions, &Session{
+				SessionID:   cs.SessionID,
+				TmuxSession: ws.DisplayName,
+				ClaudeName:  cs.DisplayName,
+				Summary:     db.LoadSummaryDB(d, cs.SessionID),
+				Status:      status,
+			})
+		}
+	}
+
 	return liveSessions
 }
 
-func markInactiveSessions(d *sql.DB, liveSessions []*Session) {
-	liveIDs := make(map[string]bool)
-	for _, s := range liveSessions {
-		liveIDs[s.SessionID] = true
-	}
-
-	workstreams := db.AllWorkstreams(d)
-	for _, ws := range workstreams {
-		for _, cs := range ws.Sessions {
-			if cs.Active && !liveIDs[cs.SessionID] {
-				db.SetSessionActive(d, cs.SessionID, false)
-				fmt.Fprintf(os.Stderr, "marked inactive: %s (%s)\n", cs.DisplayName, cs.SessionID[:min(8, len(cs.SessionID))])
-			}
-		}
-	}
+func jsonlExistsForSession(sessionID string) bool {
+	return FindSessionCWD(sessionID) != "" || findJSONLBySessionID(sessionID) != ""
 }
 
 func discoverTmuxSessions(prev map[string]*Session) []*Session {
