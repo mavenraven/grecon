@@ -34,6 +34,7 @@ type DisplayRow struct {
 type App struct {
 	Sessions     []*server.Session
 	Selected     int
+	ScrollOffset int
 	ShouldQuit   bool
 	SwitchTarget string
 	Tick         uint64

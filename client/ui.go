@@ -167,12 +167,38 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 
 	rows := app.DisplayRows()
 	rowsAvail := contentHeight - 1
+
+	selectedRowIdx := 0
+	ai := 0
+	for di, row := range rows {
+		if row.Kind == RowAgent {
+			if ai == app.Selected {
+				selectedRowIdx = di
+				break
+			}
+			ai++
+		}
+	}
+
+	scrollOffset := app.ScrollOffset
+	if selectedRowIdx < scrollOffset {
+		scrollOffset = selectedRowIdx
+	}
+	if selectedRowIdx >= scrollOffset+rowsAvail {
+		scrollOffset = selectedRowIdx - rowsAvail + 1
+	}
+	if scrollOffset < 0 {
+		scrollOffset = 0
+	}
+	app.ScrollOffset = scrollOffset
+
 	agentIdx := 0
 
-	for di, row := range rows {
-		if di >= rowsAvail {
+	for di := scrollOffset; di < len(rows); di++ {
+		if di-scrollOffset >= rowsAvail {
 			break
 		}
+		row := rows[di]
 
 		switch row.Kind {
 		case RowHeader:
@@ -388,12 +414,12 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		}
 	}
 
-	rendered := len(rows)
-	if rendered > rowsAvail {
-		rendered = rowsAvail
+	visible := len(rows) - scrollOffset
+	if visible > rowsAvail {
+		visible = rowsAvail
 	}
 	emptyRow := strings.Repeat(" ", innerW)
-	for i := rendered; i < rowsAvail; i++ {
+	for i := visible; i < rowsAvail; i++ {
 		b.WriteString("│")
 		b.WriteString(emptyRow)
 		b.WriteString("│\n")
