@@ -84,54 +84,15 @@ func main() {
 	launchCmd.Flags().StringSliceVar(&launchTags, "tag", nil, "Tag the session (key:value)")
 	launchCmd.Flags().BoolVar(&launchWorktree, "worktree", false, "Create a git worktree")
 
-	var resumeID, resumeName string
-	resumeCmd := &cobra.Command{
-		Use:   "resume",
-		Short: "Resume a past session (interactive picker, or by ID)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := server.RequireFetch(); err != nil {
-				return err
-			}
-			if resumeID != "" {
-				var namePtr *string
-				if resumeName != "" {
-					namePtr = &resumeName
-				}
-				sess, err := client.ResumeSession(resumeID, namePtr)
-				if err != nil {
-					return err
-				}
-				client.SwitchToPane(sess)
-				fmt.Fprintf(os.Stderr, "Resumed in session: %s\n", sess)
-				return nil
-			}
-			sessionID, sessName, ok := client.RunResumePicker()
-			if !ok {
-				return nil
-			}
-			sess, err := client.ResumeSession(sessionID, &sessName)
-			if err != nil {
-				return err
-			}
-			client.SwitchToPane(sess)
-			fmt.Fprintf(os.Stderr, "Resumed in session: %s\n", sess)
-			return nil
-		},
-	}
-	resumeCmd.Flags().StringVar(&resumeID, "id", "", "Session ID to resume directly")
-	resumeCmd.Flags().StringVar(&resumeName, "name", "", "Custom tmux session name")
-
-	var serverRestore bool
 	serverCmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run a background server that caches session data",
 		Run: func(cmd *cobra.Command, args []string) {
-			server.RunServer(serverRestore)
+			server.RunServer()
 		},
 	}
-	serverCmd.Flags().BoolVar(&serverRestore, "restore", false, "Restore sessions from saved state before starting")
 
-	rootCmd.AddCommand(newCmd, launchCmd, resumeCmd, serverCmd)
+	rootCmd.AddCommand(newCmd, launchCmd, serverCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

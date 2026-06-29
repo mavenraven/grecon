@@ -71,44 +71,6 @@ func CreateSession(name, cwd, claudeName string, command *string, tags []string,
 	return sessionName, nil
 }
 
-func ResumeSession(sessionID string, name *string) (string, error) {
-	if existing := findLiveSessionFromServer(sessionID); existing != "" {
-		return existing, nil
-	}
-
-	tmuxName := sessionID
-	if len(tmuxName) > 6 {
-		tmuxName = tmuxName[:6]
-	}
-	if name != nil {
-		tmuxName = *name
-	}
-
-	cwd := server.FindSessionCWD(sessionID)
-	if cwd == "" || !server.ValidateCWD(cwd) {
-		if wd, err := os.Getwd(); err == nil {
-			cwd = wd
-		} else {
-			cwd = "."
-		}
-	}
-
-	baseName := sanitizeSessionName(tmuxName)
-	sessionName := uniqueSessionName(baseName)
-	claudePath := whichClaude()
-	envVar := fmt.Sprintf("RECON_RESUMED_FROM=%s", sessionID)
-
-	cmd := exec.Command("tmux",
-		"new-session", "-d", "-s", sessionName, "-c", cwd,
-		"-e", envVar,
-		claudePath, "--resume", sessionID,
-	)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to create tmux session: %w", err)
-	}
-	return sessionName, nil
-}
-
 func DefaultNewSessionInfo() (string, string) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -170,15 +132,3 @@ func sanitizeSessionName(name string) string {
 	return result
 }
 
-func findLiveSessionFromServer(sessionID string) string {
-	sessions := server.TryFetch()
-	if sessions == nil {
-		return ""
-	}
-	for _, s := range sessions {
-		if s.SessionID == sessionID && s.PaneTarget != "" {
-			return s.PaneTarget
-		}
-	}
-	return ""
-}

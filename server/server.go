@@ -36,7 +36,7 @@ func SerializeSessions(sessions []*Session) []byte {
 	return buf
 }
 
-func RunServer(restore bool) {
+func RunServer() {
 	d, err := db.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
@@ -48,9 +48,7 @@ func RunServer(restore bool) {
 		fmt.Fprintf(os.Stderr, "Failed to import state: %v\n", err)
 	}
 
-	if restore {
-		RestoreSessions()
-	}
+	RestoreSessions()
 
 	path := SocketPath()
 	os.MkdirAll(filepath.Dir(path), 0o755)

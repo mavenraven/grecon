@@ -144,7 +144,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		colSummary = 20
 	}
 
-	title := " grecon — Claude Code Sessions "
+	title := " grecon — Workstreams "
 	topBorder := "┌" + title
 	remaining := innerW - lipgloss.Width(title)
 	if remaining > 0 {
