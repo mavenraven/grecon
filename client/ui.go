@@ -67,6 +67,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tea.KeyMsg:
+		m.app.PageSize = m.height - 4
 		code, ctrl := translateKey(msg)
 		m.app.HandleKey(code, ctrl)
 		if m.app.ShouldQuit {
@@ -107,6 +108,12 @@ func translateKey(msg tea.KeyMsg) (string, bool) {
 		return "e", true
 	case tea.KeyCtrlU:
 		return "u", true
+	case tea.KeyCtrlF:
+		return "f", true
+	case tea.KeyCtrlB:
+		return "b", true
+	case tea.KeyCtrlD:
+		return "d", true
 	case tea.KeyRunes:
 		if len(msg.Runes) == 1 {
 			return string(msg.Runes), false

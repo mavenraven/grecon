@@ -39,6 +39,7 @@ type App struct {
 	ShouldQuit   bool
 	SwitchTarget string
 	Tick         uint64
+	PageSize     int
 	FilterActive bool
 	FilterText   string
 	FilterCursor int
@@ -289,6 +290,41 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 	case "k", "up":
 		if a.Selected > 0 {
 			a.Selected--
+		}
+	case "f":
+		if ctrl {
+			count := a.SelectableCount()
+			a.Selected += a.PageSize
+			if a.Selected >= count {
+				a.Selected = count - 1
+			}
+		}
+	case "b":
+		if ctrl {
+			a.Selected -= a.PageSize
+			if a.Selected < 0 {
+				a.Selected = 0
+			}
+		}
+	case "d":
+		if ctrl {
+			count := a.SelectableCount()
+			a.Selected += a.PageSize / 2
+			if a.Selected >= count {
+				a.Selected = count - 1
+			}
+		}
+	case "u":
+		if ctrl && !a.FilterActive {
+			a.Selected -= a.PageSize / 2
+			if a.Selected < 0 {
+				a.Selected = 0
+			}
+		}
+	case "M":
+		count := a.SelectableCount()
+		if count > 0 {
+			a.Selected = count / 2
 		}
 	case "enter":
 		if s := a.SelectedSession(); s != nil {
