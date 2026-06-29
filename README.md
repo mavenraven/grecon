@@ -228,6 +228,7 @@ The discovery loop builds the live view for the TUI:
 
 - What should happen when a workstream's worktree no longer exists on disk? Delete the workstream? Keep it as inactive? TBD.
 - `grecon adopt` — a command that discovers existing Claude sessions in tmux that grecon doesn't manage, lets the user pick one, and brings it into a workstream. Explicit opt-in instead of automatic adoption. Avoids the complexity of auto-adopting every session on the machine.
+- When the reconciliation loop discovers a new Claude session the user started manually inside a managed tmux session, it gets added to the DB with no display name (falls back to project name in TUI). Should it get a `GenerateFunName()` name? That's bossy — the user might have set a name via `-n`. Claude Code has no way to rename mid-session. Could inject a shell alias into the tmux session for renaming. Minor issue, leaving alone for now.
 
 ### Pruning (periodic)
 
