@@ -30,6 +30,13 @@ func RestoreSessions() {
 			summary := db.LoadSummaryDB(d, cs.SessionID)
 			if summary != "" {
 				globalSummary.summaries[cs.SessionID] = summary
+				jsonlPath := findJSONLBySessionID(cs.SessionID)
+				if jsonlPath != "" {
+					activity := extractRecentActivity(jsonlPath)
+					if activity != "" {
+						globalSummary.hashes[cs.SessionID] = hashEntry(activity)
+					}
+				}
 			}
 		}
 	}
