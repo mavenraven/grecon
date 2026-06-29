@@ -13,12 +13,14 @@ type LiveSession struct {
 	ClaudeName  string
 	JSONLPath   string
 	Summary     string
+	Worktree    string
 }
 
 type WorkstreamInfo struct {
 	WorkstreamID int64
 	TmuxID       string
 	DisplayName  string
+	Worktree     string
 	Active       bool
 	Sessions     []ClaudeSessionInfo
 }
@@ -89,7 +91,7 @@ func syncOne(tx *sql.Tx, s LiveSession) {
 		).Scan(&existingWSID)
 
 		if err == sql.ErrNoRows {
-			result, err := tx.Exec(`INSERT INTO workstreams (active) VALUES (1)`)
+			result, err := tx.Exec(`INSERT INTO workstreams (active, worktree) VALUES (1, ?)`, s.Worktree)
 			if err != nil {
 				return
 			}
@@ -110,6 +112,12 @@ func syncOne(tx *sql.Tx, s LiveSession) {
 		)
 	}
 
+	if s.Worktree != "" {
+		tx.Exec(
+			`UPDATE workstreams SET worktree = ? WHERE id = ? AND (worktree IS NULL OR worktree = '')`,
+			s.Worktree, wsID,
+		)
+	}
 	if s.ClaudeName != "" {
 		tx.Exec(
 			`UPDATE claude_sessions SET display_name = ? WHERE session_id = ? AND display_name = ''`,
@@ -202,7 +210,7 @@ func queryWorkstreams(d *sql.DB, active bool) []WorkstreamInfo {
 	}
 
 	rows, err := d.Query(`
-		SELECT w.id, t.tmux_id, t.display_name, w.active
+		SELECT w.id, t.tmux_id, t.display_name, w.active, COALESCE(w.worktree, '')
 		FROM workstreams w
 		JOIN tmux_sessions t ON t.workstream_id = w.id
 		WHERE w.active = ?
@@ -216,7 +224,7 @@ func queryWorkstreams(d *sql.DB, active bool) []WorkstreamInfo {
 	for rows.Next() {
 		var ws WorkstreamInfo
 		var activeVal int
-		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &activeVal)
+		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &activeVal, &ws.Worktree)
 		ws.Active = activeVal == 1
 		workstreams = append(workstreams, ws)
 	}

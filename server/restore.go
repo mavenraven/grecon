@@ -55,9 +55,12 @@ func RestoreSessions() {
 		}
 
 		first := ws.Sessions[0]
-		cwd := FindSessionCWD(first.SessionID)
+		cwd := ws.Worktree
+		if cwd == "" {
+			cwd = FindSessionCWD(first.SessionID)
+		}
 		if cwd == "" || !ValidateCWD(cwd) {
-			fmt.Fprintf(os.Stderr, "  skip %s (%s): bad cwd\n", ws.DisplayName, first.SessionID[:min(8, len(first.SessionID))])
+			fmt.Fprintf(os.Stderr, "  skip %s (%s): bad cwd %q\n", ws.DisplayName, first.SessionID[:min(8, len(first.SessionID))], cwd)
 			continue
 		}
 

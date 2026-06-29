@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,12 +142,17 @@ func RunServer() {
 
 				var liveSessions []db.LiveSession
 				for _, s := range sessions {
+					var worktree string
+					if strings.Contains(s.CWD, "/.claude/worktrees/") {
+						worktree = s.CWD
+					}
 					liveSessions = append(liveSessions, db.LiveSession{
 						SessionID:   s.SessionID,
 						TmuxSession: s.TmuxSession,
 						ClaudeName:  s.ClaudeName,
 						JSONLPath:   s.JSONLPath,
 						Summary:     s.Summary,
+						Worktree:    worktree,
 					})
 				}
 				db.SyncLiveSessions(d, liveSessions)
