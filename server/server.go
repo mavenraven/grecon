@@ -100,11 +100,10 @@ func RunServer() {
 	os.Remove(path)
 
 	prev := make(map[string]*Session)
-	initial := discoverTmuxSessions(prev)
+	initial := seedFromDB(d)
 	for _, s := range initial {
 		prev[s.SessionID] = s
 	}
-	AttachSummaries(initial)
 
 	pw := NewPaneWatcher()
 	defer pw.Stop()
@@ -297,6 +296,27 @@ func readFrame(conn net.Conn, deadline time.Duration) []*Session {
 	var sessions []*Session
 	if json.Unmarshal(buf, &sessions) != nil {
 		return nil
+	}
+	return sessions
+}
+
+func seedFromDB(d *sql.DB) []*Session {
+	workstreams := db.AllWorkstreams(d)
+	var sessions []*Session
+	for _, ws := range workstreams {
+		for _, cs := range ws.Sessions {
+			status := StatusInactive
+			if cs.Active {
+				status = StatusNew
+			}
+			sessions = append(sessions, &Session{
+				SessionID:   cs.SessionID,
+				TmuxSession: ws.DisplayName,
+				ClaudeName:  cs.DisplayName,
+				Summary:     db.LoadSummaryDB(d, cs.SessionID),
+				Status:      status,
+			})
+		}
 	}
 	return sessions
 }
