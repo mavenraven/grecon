@@ -200,6 +200,11 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	app.ScrollOffset = scrollOffset
 
 	agentIdx := 0
+	for di := 0; di < scrollOffset; di++ {
+		if rows[di].Kind == RowAgent {
+			agentIdx++
+		}
+	}
 
 	for di := scrollOffset; di < len(rows); di++ {
 		if di-scrollOffset >= rowsAvail {
