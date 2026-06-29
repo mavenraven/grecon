@@ -21,10 +21,11 @@ type ClaudeSessionInfo struct {
 }
 
 func CreateWorkstream(tmuxSession, claudeName, worktree string) {
-	d := Get()
+	d := OpenClient()
 	if d == nil {
 		return
 	}
+	defer d.Close()
 
 	tx, err := d.Begin()
 	if err != nil {

@@ -43,3 +43,18 @@ func Open() (*sql.DB, error) {
 func Get() *sql.DB {
 	return global
 }
+
+func OpenClient() *sql.DB {
+	if global != nil {
+		return global
+	}
+	path := Path()
+	if path == "" {
+		return nil
+	}
+	d, err := sql.Open("sqlite", path+"?_journal_mode=WAL")
+	if err != nil {
+		return nil
+	}
+	return d
+}

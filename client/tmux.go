@@ -114,10 +114,11 @@ func whichClaude() string {
 }
 
 func ReactivateSession(sessionID, tmuxSession string) {
-	d := db.Get()
+	d := db.OpenClient()
 	if d == nil {
 		return
 	}
+	defer d.Close()
 	db.SetSessionActive(d, sessionID, true)
 
 	if !tmuxSessionExists(tmuxSession) {
