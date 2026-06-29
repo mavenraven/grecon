@@ -1145,25 +1145,6 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					BackgroundTasks:   info.backgroundTasks,
 					PendingBgCalls:    info.pendingBgCalls,
 				}
-			} else {
-				projName, relDir, branch := gitProjectInfo(live.paneCWD)
-				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
-				claudeName := loadClaudeNameDB(sessionID)
-
-				unmatchedResults[idx] = &Session{
-					SessionID:   sessionID,
-					ProjectName: projName,
-					Branch:      branch,
-					CWD:         live.paneCWD,
-					RelativeDir: relDir,
-					TmuxSession: live.tmuxSession,
-					PaneTarget:  live.paneTarget,
-					Status:      StatusNew,
-					PID:         live.pid,
-					StartedAt:   live.startedAt,
-					Tags:        tags,
-					ClaudeName:  claudeName,
-				}
 			}
 		}(i, u.sessionID, u.live)
 	}

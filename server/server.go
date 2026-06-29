@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
@@ -344,7 +345,8 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 			}
 			for sid := range liveIDs {
 				if !knownIDs[sid] {
-					db.AddClaudeSession(d, ws.WorkstreamID, sid, "")
+					name := readAgentNameFromJSONL(sid)
+					db.AddClaudeSession(d, ws.WorkstreamID, sid, name)
 				}
 			}
 		}
@@ -388,6 +390,34 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 	}
 
 	return liveSessions
+}
+
+func readAgentNameFromJSONL(sessionID string) string {
+	path := findJSONLBySessionID(sessionID)
+	if path == "" {
+		return ""
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for i := 0; i < 10 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		if !strings.Contains(line, `"agent-name"`) {
+			continue
+		}
+		var entry struct {
+			Type      string `json:"type"`
+			AgentName string `json:"agentName"`
+		}
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Type == "agent-name" && entry.AgentName != "" {
+			return entry.AgentName
+		}
+	}
+	return ""
 }
 
 func jsonlExistsForSession(sessionID string) bool {

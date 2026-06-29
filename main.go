@@ -110,7 +110,15 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(newCmd, launchCmd, serverCmd, jsonCmd)
+	nameCmd := &cobra.Command{
+		Use:   "name",
+		Short: "Generate a random fun name",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println(client.GenerateFunName())
+		},
+	}
+
+	rootCmd.AddCommand(newCmd, launchCmd, serverCmd, jsonCmd, nameCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

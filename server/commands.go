@@ -197,6 +197,8 @@ func handleCreateSession(cmd Command) CommandResponse {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("tmux: %v", err)}
 	}
 
+	injectClaudeAlias(sessionName)
+
 	if cmd.Worktree {
 		go fixDefaultPath(sessionName)
 	}
@@ -264,6 +266,21 @@ func uniqueTmuxName(baseName string) string {
 			return candidate
 		}
 	}
+}
+
+func injectClaudeAlias(sessionName string) {
+	greconPath, err := exec.LookPath("grecon")
+	if err != nil {
+		greconPath = "grecon"
+	}
+	claudePath := whichClaudeBinary()
+
+	hook := fmt.Sprintf(
+		`send-keys 'claude() { %s -n "$(%s name)" "$@"; }' Enter`,
+		claudePath, greconPath,
+	)
+	exec.Command("tmux", "set-hook", "-t", sessionName, "after-new-window", hook).Run()
+	exec.Command("tmux", "set-hook", "-t", sessionName, "after-split-window", hook).Run()
 }
 
 func fixDefaultPath(tmuxSession string) {
