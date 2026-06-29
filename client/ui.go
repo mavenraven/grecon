@@ -169,23 +169,30 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 	rowsAvail := contentHeight - 1
 
 	selectedRowIdx := 0
+	selectedLastIdx := 0
 	ai := 0
 	for di, row := range rows {
 		if row.Kind == RowAgent {
 			if ai == app.Selected {
 				selectedRowIdx = di
+			}
+			if ai == app.Selected+1 {
+				selectedLastIdx = di - 1
 				break
 			}
 			ai++
 		}
+	}
+	if selectedLastIdx == 0 {
+		selectedLastIdx = len(rows) - 1
 	}
 
 	scrollOffset := app.ScrollOffset
 	if selectedRowIdx < scrollOffset {
 		scrollOffset = selectedRowIdx
 	}
-	if selectedRowIdx >= scrollOffset+rowsAvail {
-		scrollOffset = selectedRowIdx - rowsAvail + 1
+	if selectedLastIdx >= scrollOffset+rowsAvail {
+		scrollOffset = selectedLastIdx - rowsAvail + 1
 	}
 	if scrollOffset < 0 {
 		scrollOffset = 0
