@@ -10,8 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -51,26 +49,12 @@ func lockPath() string {
 
 func acquireLock() {
 	lp := lockPath()
-	data, err := os.ReadFile(lp)
-	if err == nil {
-		pidStr := strings.TrimSpace(string(data))
-		if pidStr != "" {
-			pid, err := strconv.Atoi(pidStr)
-			if err == nil {
-				proc, err := os.FindProcess(pid)
-				if err == nil {
-					if proc.Signal(syscall.Signal(0)) == nil {
-						fmt.Fprintf(os.Stderr, "grecon server already running (pid %d)\n", pid)
-						os.Exit(1)
-					}
-				}
-			}
-		}
-		fmt.Fprintf(os.Stderr, "Removing stale lock file %s\n", lp)
+	if _, err := os.Stat(lp); err == nil {
+		fmt.Fprintf(os.Stderr, "Lock file exists: %s\nIf grecon server is not running, it is safe to remove this file.\n", lp)
+		os.Exit(1)
 	}
 	os.MkdirAll(filepath.Dir(lp), 0o755)
-	content := fmt.Sprintf("%d\n# This is a grecon server lock file. It is safe to remove if grecon server is not running.\n", os.Getpid())
-	os.WriteFile(lp, []byte(content), 0o644)
+	os.WriteFile(lp, []byte{}, 0o644)
 }
 
 func releaseLock() {
