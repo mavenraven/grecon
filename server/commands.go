@@ -269,18 +269,26 @@ func uniqueTmuxName(baseName string) string {
 }
 
 func injectClaudeAlias(sessionName string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
 	greconPath, err := exec.LookPath("grecon")
 	if err != nil {
 		greconPath = "grecon"
 	}
 	claudePath := whichClaudeBinary()
 
-	hook := fmt.Sprintf(
-		`send-keys 'claude() { %s -n "$(%s name)" "$@"; }' Enter`,
-		claudePath, greconPath,
-	)
-	exec.Command("tmux", "set-hook", "-t", sessionName, "after-new-window", hook).Run()
-	exec.Command("tmux", "set-hook", "-t", sessionName, "after-split-window", hook).Run()
+	initPath := filepath.Join(home, ".grecon", "init.sh")
+	content := fmt.Sprintf("claude() { %s -n \"$(%s name)\" \"$@\"; }\n", claudePath, greconPath)
+	os.WriteFile(initPath, []byte(content), 0o644)
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	exec.Command("tmux", "set", "-t", sessionName, "default-command",
+		fmt.Sprintf("source %s; exec %s", initPath, shell)).Run()
 }
 
 func fixDefaultPath(tmuxSession string) {
