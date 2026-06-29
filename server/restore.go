@@ -64,11 +64,12 @@ func RestoreSessions() {
 			continue
 		}
 
-		envVar := fmt.Sprintf("RECON_RESUMED_FROM=%s", first.SessionID)
+		envResumed := fmt.Sprintf("RECON_RESUMED_FROM=%s", first.SessionID)
+		envName := fmt.Sprintf("RECON_CLAUDE_NAME=%s", first.DisplayName)
 
 		cmd := exec.Command("tmux",
 			"new-session", "-d", "-s", ws.DisplayName, "-c", cwd,
-			"-e", envVar,
+			"-e", envResumed, "-e", envName,
 			claudePath, "--resume", first.SessionID,
 		)
 		if err := cmd.Run(); err != nil {
@@ -82,10 +83,11 @@ func RestoreSessions() {
 			if csCwd == "" || !ValidateCWD(csCwd) {
 				csCwd = cwd
 			}
-			csEnv := fmt.Sprintf("RECON_RESUMED_FROM=%s", cs.SessionID)
+			csEnvResumed := fmt.Sprintf("RECON_RESUMED_FROM=%s", cs.SessionID)
+			csEnvName := fmt.Sprintf("RECON_CLAUDE_NAME=%s", cs.DisplayName)
 			exec.Command("tmux",
 				"new-window", "-t", ws.DisplayName, "-c", csCwd,
-				"-e", csEnv,
+				"-e", csEnvResumed, "-e", csEnvName,
 				claudePath, "--resume", cs.SessionID,
 			).Run()
 			fmt.Fprintf(os.Stderr, "  restored %s window (%s)\n", ws.DisplayName, cs.SessionID[:min(8, len(cs.SessionID))])
