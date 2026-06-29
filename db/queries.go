@@ -20,13 +20,7 @@ type ClaudeSessionInfo struct {
 	Active      bool
 }
 
-func CreateWorkstream(tmuxSession, claudeName, worktree string) {
-	d := OpenClient()
-	if d == nil {
-		return
-	}
-	defer d.Close()
-
+func CreateWorkstreamDB(d *sql.DB, tmuxSession, claudeName, worktree string) {
 	tx, err := d.Begin()
 	if err != nil {
 		return

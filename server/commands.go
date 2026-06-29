@@ -11,11 +11,26 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"grecon/db"
 )
 
 type Command struct {
 	Type        string `json:"type"`
 	TmuxSession string `json:"tmux_session,omitempty"`
+	Name        string `json:"name,omitempty"`
+	CWD         string `json:"cwd,omitempty"`
+	ClaudeName  string `json:"claude_name,omitempty"`
+	Worktree    bool   `json:"worktree,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	CustomCmd   string `json:"custom_cmd,omitempty"`
+	Tags        string `json:"tags,omitempty"`
+}
+
+type CommandResponse struct {
+	OK          bool   `json:"ok"`
+	TmuxSession string `json:"tmux_session,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 func CommandSocketPath() string {
@@ -26,15 +41,15 @@ func CommandSocketPath() string {
 	return filepath.Join(home, ".grecon", "grecon-cmd.sock")
 }
 
-func SendCommand(cmd Command) error {
+func SendCommand(cmd Command) (*CommandResponse, error) {
 	data, err := json.Marshal(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	conn, err := net.DialTimeout("unix", CommandSocketPath(), 500*time.Millisecond)
 	if err != nil {
-		return fmt.Errorf("server not running: %w", err)
+		return nil, fmt.Errorf("server not running: %w", err)
 	}
 	defer conn.Close()
 
@@ -42,17 +57,29 @@ func SendCommand(cmd Command) error {
 	binary.BigEndian.PutUint32(buf[:4], uint32(len(data)))
 	copy(buf[4:], data)
 
-	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Write(buf); err != nil {
-		return err
+		return nil, err
 	}
 
-	conn.SetReadDeadline(time.Now().Add(time.Second))
-	var ack [1]byte
-	if _, err := io.ReadFull(conn, ack[:]); err != nil {
-		return err
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var respLenBuf [4]byte
+	if _, err := io.ReadFull(conn, respLenBuf[:]); err != nil {
+		return nil, err
 	}
-	return nil
+	respLen := binary.BigEndian.Uint32(respLenBuf[:])
+	if respLen == 0 || respLen > 1_000_000 {
+		return nil, fmt.Errorf("invalid response length")
+	}
+	respBuf := make([]byte, respLen)
+	if _, err := io.ReadFull(conn, respBuf); err != nil {
+		return nil, err
+	}
+	var resp CommandResponse
+	if err := json.Unmarshal(respBuf, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
 }
 
 func listenCommands() {
@@ -97,12 +124,145 @@ func handleCommand(conn net.Conn) {
 		return
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(time.Second))
-	conn.Write([]byte{0x01})
-
+	var resp CommandResponse
 	switch cmd.Type {
 	case "fix-default-path":
 		go fixDefaultPath(cmd.TmuxSession)
+		resp = CommandResponse{OK: true}
+	case "create-session":
+		resp = handleCreateSession(cmd)
+	case "reactivate-session":
+		resp = handleReactivateSession(cmd)
+	default:
+		resp = CommandResponse{OK: false, Error: "unknown command"}
+	}
+
+	sendResponse(conn, resp)
+}
+
+func sendResponse(conn net.Conn, resp CommandResponse) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	buf := make([]byte, 4+len(data))
+	binary.BigEndian.PutUint32(buf[:4], uint32(len(data)))
+	copy(buf[4:], data)
+	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	conn.Write(buf)
+}
+
+func handleCreateSession(cmd Command) CommandResponse {
+	d := db.Get()
+	if d == nil {
+		return CommandResponse{OK: false, Error: "no database"}
+	}
+
+	if !ValidateCWD(cmd.CWD) {
+		return CommandResponse{OK: false, Error: "invalid cwd"}
+	}
+
+	baseName := sanitizeSessionName(cmd.Name)
+	sessionName := uniqueTmuxName(baseName)
+
+	var worktreePath string
+	if cmd.Worktree {
+		worktreePath = cmd.CWD
+	}
+
+	db.CreateWorkstreamDB(d, sessionName, cmd.ClaudeName, worktreePath)
+
+	args := []string{"new-session", "-d", "-s", sessionName, "-c", cmd.CWD}
+
+	if cmd.Tags != "" {
+		args = append(args, "-e", fmt.Sprintf("RECON_TAGS=%s", cmd.Tags))
+	}
+
+	if cmd.CustomCmd != "" {
+		parts := strings.Fields(cmd.CustomCmd)
+		args = append(args, parts...)
+	} else {
+		claudePath := whichClaudeBinary()
+		args = append(args, claudePath)
+		if cmd.ClaudeName != "" {
+			args = append(args, "-n", cmd.ClaudeName)
+		}
+		if cmd.Worktree {
+			args = append(args, "--worktree")
+		}
+	}
+
+	tmuxCmd := exec.Command("tmux", args...)
+	if err := tmuxCmd.Run(); err != nil {
+		return CommandResponse{OK: false, Error: fmt.Sprintf("tmux: %v", err)}
+	}
+
+	if cmd.Worktree {
+		go fixDefaultPath(sessionName)
+	}
+
+	return CommandResponse{OK: true, TmuxSession: sessionName}
+}
+
+func handleReactivateSession(cmd Command) CommandResponse {
+	d := db.Get()
+	if d == nil {
+		return CommandResponse{OK: false, Error: "no database"}
+	}
+
+	db.SetSessionActive(d, cmd.SessionID, true)
+
+	tmuxSession := cmd.TmuxSession
+	if !tmuxSessionExists(tmuxSession) {
+		cwd := FindSessionCWD(cmd.SessionID)
+		if cwd == "" || !ValidateCWD(cwd) {
+			return CommandResponse{OK: false, Error: "bad cwd"}
+		}
+		claudePath := whichClaudeBinary()
+		exec.Command("tmux",
+			"new-session", "-d", "-s", tmuxSession, "-c", cwd,
+			claudePath, "--resume", cmd.SessionID,
+		).Run()
+	} else {
+		cwd := FindSessionCWD(cmd.SessionID)
+		if cwd == "" {
+			cwd = "."
+		}
+		claudePath := whichClaudeBinary()
+		exec.Command("tmux",
+			"new-window", "-t", tmuxSession, "-c", cwd,
+			claudePath, "--resume", cmd.SessionID,
+		).Run()
+	}
+
+	return CommandResponse{OK: true, TmuxSession: tmuxSession}
+}
+
+func sanitizeSessionName(name string) string {
+	var b strings.Builder
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			b.WriteRune(c)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+	result := strings.TrimLeft(b.String(), "-")
+	if result == "" {
+		return "claude"
+	}
+	return result
+}
+
+func uniqueTmuxName(baseName string) string {
+	if !tmuxSessionExists(baseName) {
+		return baseName
+	}
+	for n := 2; ; n++ {
+		candidate := fmt.Sprintf("%s-%d", baseName, n)
+		if !tmuxSessionExists(candidate) {
+			return candidate
+		}
 	}
 }
 

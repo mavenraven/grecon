@@ -8,7 +8,6 @@ import (
 	"strings"
 	"unicode"
 
-	"grecon/db"
 	"grecon/server"
 )
 
@@ -29,47 +28,43 @@ func CreateSession(name, cwd, claudeName string, command *string, tags []string,
 		return "", fmt.Errorf("invalid working directory: %s", cwd)
 	}
 
-	baseName := sanitizeSessionName(name)
-	sessionName := uniqueSessionName(baseName)
-
-	args := []string{"new-session", "-d", "-s", sessionName, "-c", cwd}
-
-	if len(tags) > 0 {
-		tagsVal := strings.Join(tags, ",")
-		args = append(args, "-e", fmt.Sprintf("RECON_TAGS=%s", tagsVal))
-	}
-
+	var customCmd string
 	if command != nil {
-		parts := strings.Fields(*command)
-		args = append(args, parts...)
-	} else {
-		claudePath := whichClaude()
-		args = append(args, claudePath)
-		if claudeName != "" {
-			args = append(args, "-n", claudeName)
-		}
-		if worktree {
-			args = append(args, "--worktree")
-		}
+		customCmd = *command
 	}
 
-	tmuxCmd := exec.Command("tmux", args...)
-	if err := tmuxCmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to create tmux session: %w", err)
+	var tagsStr string
+	if len(tags) > 0 {
+		tagsStr = strings.Join(tags, ",")
 	}
 
-	var worktreePath string
-	if worktree {
-		worktreePath = cwd
-		server.SendCommand(server.Command{
-			Type:        "fix-default-path",
-			TmuxSession: sessionName,
-		})
+	resp, err := server.SendCommand(server.Command{
+		Type:       "create-session",
+		Name:       sanitizeSessionName(name),
+		CWD:        cwd,
+		ClaudeName: claudeName,
+		Worktree:   worktree,
+		CustomCmd:  customCmd,
+		Tags:       tagsStr,
+	})
+	if err != nil {
+		return "", fmt.Errorf("server error: %w", err)
 	}
+	if !resp.OK {
+		return "", fmt.Errorf("create failed: %s", resp.Error)
+	}
+	return resp.TmuxSession, nil
+}
 
-	db.CreateWorkstream(sessionName, claudeName, worktreePath)
-
-	return sessionName, nil
+func ReactivateSession(sessionID, tmuxSession string) {
+	resp, err := server.SendCommand(server.Command{
+		Type:        "reactivate-session",
+		SessionID:   sessionID,
+		TmuxSession: tmuxSession,
+	})
+	if err != nil || !resp.OK {
+		return
+	}
 }
 
 func DefaultNewSessionInfo() (string, string) {
@@ -82,66 +77,6 @@ func DefaultNewSessionInfo() (string, string) {
 		name = "claude"
 	}
 	return name, cwd
-}
-
-func uniqueSessionName(baseName string) string {
-	if !tmuxSessionExists(baseName) {
-		return baseName
-	}
-	for n := 2; ; n++ {
-		candidate := fmt.Sprintf("%s-%d", baseName, n)
-		if !tmuxSessionExists(candidate) {
-			return candidate
-		}
-	}
-}
-
-func tmuxSessionExists(name string) bool {
-	err := exec.Command("tmux", "has-session", "-t", name).Run()
-	return err == nil
-}
-
-func whichClaude() string {
-	out, err := exec.Command("which", "claude").Output()
-	if err != nil {
-		return "claude"
-	}
-	path := strings.TrimSpace(string(out))
-	if path == "" {
-		return "claude"
-	}
-	return path
-}
-
-func ReactivateSession(sessionID, tmuxSession string) {
-	d := db.OpenClient()
-	if d == nil {
-		return
-	}
-	defer d.Close()
-	db.SetSessionActive(d, sessionID, true)
-
-	if !tmuxSessionExists(tmuxSession) {
-		cwd := server.FindSessionCWD(sessionID)
-		if cwd == "" || !server.ValidateCWD(cwd) {
-			return
-		}
-		claudePath := whichClaude()
-		exec.Command("tmux",
-			"new-session", "-d", "-s", tmuxSession, "-c", cwd,
-			claudePath, "--resume", sessionID,
-		).Run()
-	} else {
-		cwd := server.FindSessionCWD(sessionID)
-		if cwd == "" {
-			cwd = "."
-		}
-		claudePath := whichClaude()
-		exec.Command("tmux",
-			"new-window", "-t", tmuxSession, "-c", cwd,
-			claudePath, "--resume", sessionID,
-		).Run()
-	}
 }
 
 func KillSession(name string) bool {
@@ -163,4 +98,3 @@ func sanitizeSessionName(name string) string {
 	}
 	return result
 }
-
