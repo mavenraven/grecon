@@ -187,9 +187,17 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 		selectedLastIdx = len(rows) - 1
 	}
 
+	headerIdx := selectedRowIdx
+	for headerIdx > 0 && rows[headerIdx-1].Kind != RowHeader {
+		headerIdx--
+	}
+	if headerIdx > 0 {
+		headerIdx--
+	}
+
 	scrollOffset := app.ScrollOffset
-	if selectedRowIdx < scrollOffset {
-		scrollOffset = selectedRowIdx
+	if headerIdx < scrollOffset {
+		scrollOffset = headerIdx
 	}
 	if selectedLastIdx >= scrollOffset+rowsAvail {
 		scrollOffset = selectedLastIdx - rowsAvail + 1
