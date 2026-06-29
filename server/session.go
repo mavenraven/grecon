@@ -101,6 +101,7 @@ type Session struct {
 	Wakeup            *Wakeup           `json:"wakeup,omitempty"`
 	BackgroundTasks   []*BackgroundTask          `json:"background_tasks,omitempty"`
 	PendingBgCalls    map[string]*BackgroundTask `json:"-"`
+	WorktreeGone      bool                       `json:"worktree_gone,omitempty"`
 }
 
 type Subagent struct {
