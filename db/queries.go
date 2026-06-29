@@ -4,24 +4,13 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
-	"strings"
 )
-
-type LiveSession struct {
-	SessionID   string
-	TmuxSession string
-	ClaudeName  string
-	JSONLPath   string
-	Summary     string
-	Worktree    string
-}
 
 type WorkstreamInfo struct {
 	WorkstreamID int64
 	TmuxID       string
 	DisplayName  string
 	Worktree     string
-	Active       bool
 	Sessions     []ClaudeSessionInfo
 }
 
@@ -30,135 +19,107 @@ type ClaudeSessionInfo struct {
 	DisplayName string
 }
 
-func SyncLiveSessions(d *sql.DB, live []LiveSession) {
+func CreateWorkstream(tmuxSession, claudeName, worktree string) {
+	d := Get()
+	if d == nil {
+		return
+	}
+
 	tx, err := d.Begin()
 	if err != nil {
 		return
 	}
 
-	liveSessionIDs := make(map[string]bool)
-	for _, s := range live {
-		liveSessionIDs[s.SessionID] = true
-		syncOne(tx, s)
+	result, err := tx.Exec(`INSERT INTO workstreams (worktree) VALUES (?)`, worktree)
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	wsID, _ := result.LastInsertId()
+
+	tmuxID := "ws-" + tmuxSession
+	_, err = tx.Exec(
+		`INSERT INTO tmux_sessions (workstream_id, tmux_id, display_name) VALUES (?, ?, ?)`,
+		wsID, tmuxID, tmuxSession,
+	)
+	if err != nil {
+		tx.Rollback()
+		return
 	}
 
-	rows, err := tx.Query(`
-		SELECT w.id, c.session_id FROM workstreams w
-		JOIN claude_sessions c ON c.workstream_id = w.id
-	`)
-	if err == nil {
-		type wsSession struct {
-			wsID      int64
-			sessionID string
-		}
-		var all []wsSession
-		for rows.Next() {
-			var ws wsSession
-			rows.Scan(&ws.wsID, &ws.sessionID)
-			all = append(all, ws)
-		}
-		rows.Close()
-
-		activeWSIDs := make(map[int64]bool)
-		for _, ws := range all {
-			if liveSessionIDs[ws.sessionID] {
-				activeWSIDs[ws.wsID] = true
-			}
-		}
-
-		tx.Exec(`UPDATE workstreams SET active = 0`)
-		for wsID := range activeWSIDs {
-			tx.Exec(`UPDATE workstreams SET active = 1 WHERE id = ?`, wsID)
-		}
+	_, err = tx.Exec(
+		`INSERT INTO claude_sessions (workstream_id, session_id, display_name) VALUES (?, ?, ?)`,
+		wsID, "", claudeName,
+	)
+	if err != nil {
+		tx.Rollback()
+		return
 	}
 
 	tx.Commit()
 }
 
-func syncOne(tx *sql.Tx, s LiveSession) {
-	var wsID int64
-	err := tx.QueryRow(
-		`SELECT workstream_id FROM claude_sessions WHERE session_id = ?`,
-		s.SessionID,
-	).Scan(&wsID)
+func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
+	rows, err := d.Query(`
+		SELECT w.id, t.tmux_id, t.display_name, COALESCE(w.worktree, '')
+		FROM workstreams w
+		JOIN tmux_sessions t ON t.workstream_id = w.id
+		ORDER BY w.id
+	`)
+	if err != nil {
+		return nil
+	}
 
-	if err == sql.ErrNoRows {
-		var existingWSID int64
-		tmuxID := "ws-" + s.TmuxSession
-		err := tx.QueryRow(
-			`SELECT workstream_id FROM tmux_sessions WHERE tmux_id = ?`,
-			tmuxID,
-		).Scan(&existingWSID)
+	var workstreams []WorkstreamInfo
+	for rows.Next() {
+		var ws WorkstreamInfo
+		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &ws.Worktree)
+		workstreams = append(workstreams, ws)
+	}
+	rows.Close()
 
-		if err == sql.ErrNoRows {
-			result, err := tx.Exec(`INSERT INTO workstreams (active, worktree) VALUES (1, ?)`, s.Worktree)
-			if err != nil {
-				return
-			}
-			wsID, _ = result.LastInsertId()
-			tx.Exec(
-				`INSERT INTO tmux_sessions (workstream_id, tmux_id, display_name) VALUES (?, ?, ?)`,
-				wsID, tmuxID, s.TmuxSession,
-			)
-		} else if err == nil {
-			wsID = existingWSID
-		} else {
-			return
+	for i := range workstreams {
+		ws := &workstreams[i]
+		crows, err := d.Query(`
+			SELECT session_id, display_name FROM claude_sessions
+			WHERE workstream_id = ?
+		`, ws.WorkstreamID)
+		if err != nil {
+			continue
 		}
-
-		tx.Exec(
-			`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, display_name) VALUES (?, ?, ?)`,
-			wsID, s.SessionID, s.ClaudeName,
-		)
+		for crows.Next() {
+			var cs ClaudeSessionInfo
+			crows.Scan(&cs.SessionID, &cs.DisplayName)
+			ws.Sessions = append(ws.Sessions, cs)
+		}
+		crows.Close()
 	}
 
-	if s.Worktree != "" {
-		tx.Exec(
-			`UPDATE workstreams SET worktree = ? WHERE id = ? AND (worktree IS NULL OR worktree = '')`,
-			s.Worktree, wsID,
-		)
-	}
-	if s.ClaudeName != "" {
-		tx.Exec(
-			`UPDATE claude_sessions SET display_name = ? WHERE session_id = ? AND display_name = ''`,
-			s.ClaudeName, s.SessionID,
-		)
-	}
-	if s.Summary != "" {
-		tx.Exec(
-			`UPDATE claude_sessions SET summary = ? WHERE session_id = ?`,
-			s.Summary, s.SessionID,
-		)
-	}
+	return workstreams
 }
 
 func PruneDeadSessions(d *sql.DB) {
-	rows, err := d.Query(`
-		SELECT c.id, c.session_id, w.id as ws_id
-		FROM claude_sessions c
-		JOIN workstreams w ON w.id = c.workstream_id
-		WHERE w.active = 0
-	`)
+	rows, err := d.Query(`SELECT id, session_id, workstream_id FROM claude_sessions`)
 	if err != nil {
 		return
 	}
 
-	type deadCandidate struct {
-		claudeID  int64
+	type candidate struct {
+		id        int64
 		sessionID string
 		wsID      int64
 	}
-	var candidates []deadCandidate
+	var candidates []candidate
 	for rows.Next() {
-		var c deadCandidate
-		rows.Scan(&c.claudeID, &c.sessionID, &c.wsID)
+		var c candidate
+		rows.Scan(&c.id, &c.sessionID, &c.wsID)
 		candidates = append(candidates, c)
 	}
 	rows.Close()
 
 	for _, c := range candidates {
-		if !jsonlExists(c.sessionID) {
-			d.Exec(`DELETE FROM claude_sessions WHERE id = ?`, c.claudeID)
+		if c.sessionID != "" && !jsonlExists(c.sessionID) {
+			d.Exec(`DELETE FROM claude_sessions WHERE id = ?`, c.id)
 		}
 	}
 
@@ -195,61 +156,6 @@ func jsonlExists(sessionID string) bool {
 	return false
 }
 
-func ActiveWorkstreams(d *sql.DB) []WorkstreamInfo {
-	return queryWorkstreams(d, true)
-}
-
-func InactiveWorkstreams(d *sql.DB) []WorkstreamInfo {
-	return queryWorkstreams(d, false)
-}
-
-func queryWorkstreams(d *sql.DB, active bool) []WorkstreamInfo {
-	activeInt := 0
-	if active {
-		activeInt = 1
-	}
-
-	rows, err := d.Query(`
-		SELECT w.id, t.tmux_id, t.display_name, w.active, COALESCE(w.worktree, '')
-		FROM workstreams w
-		JOIN tmux_sessions t ON t.workstream_id = w.id
-		WHERE w.active = ?
-		ORDER BY w.id
-	`, activeInt)
-	if err != nil {
-		return nil
-	}
-
-	var workstreams []WorkstreamInfo
-	for rows.Next() {
-		var ws WorkstreamInfo
-		var activeVal int
-		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &activeVal, &ws.Worktree)
-		ws.Active = activeVal == 1
-		workstreams = append(workstreams, ws)
-	}
-	rows.Close()
-
-	for i := range workstreams {
-		ws := &workstreams[i]
-		crows, err := d.Query(`
-			SELECT session_id, display_name FROM claude_sessions
-			WHERE workstream_id = ?
-		`, ws.WorkstreamID)
-		if err != nil {
-			continue
-		}
-		for crows.Next() {
-			var cs ClaudeSessionInfo
-			crows.Scan(&cs.SessionID, &cs.DisplayName)
-			ws.Sessions = append(ws.Sessions, cs)
-		}
-		crows.Close()
-	}
-
-	return workstreams
-}
-
 func LoadTmuxNameDB(d *sql.DB, sessionID string) string {
 	var name string
 	d.QueryRow(`
@@ -267,28 +173,6 @@ func LoadClaudeNameDB(d *sql.DB, sessionID string) string {
 	return name
 }
 
-func SaveTmuxNameDB(d *sql.DB, sessionID, tmuxName string) {
-	if strings.HasPrefix(sessionID, "tmux-") {
-		return
-	}
-	d.Exec(`
-		UPDATE tmux_sessions SET display_name = ?
-		WHERE workstream_id = (
-			SELECT workstream_id FROM claude_sessions WHERE session_id = ?
-		)
-	`, tmuxName, sessionID)
-}
-
-func SaveClaudeNameDB(d *sql.DB, sessionID, claudeName string) {
-	if strings.HasPrefix(sessionID, "tmux-") {
-		return
-	}
-	d.Exec(`
-		UPDATE claude_sessions SET display_name = ?
-		WHERE session_id = ? AND display_name = ''
-	`, claudeName, sessionID)
-}
-
 func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 	d.Exec(
 		`UPDATE claude_sessions SET summary = ? WHERE session_id = ?`,
@@ -296,20 +180,10 @@ func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 	)
 }
 
-func DeleteClaudeSession(d *sql.DB, sessionID string) {
-	var wsID int64
-	err := d.QueryRow(`SELECT workstream_id FROM claude_sessions WHERE session_id = ?`, sessionID).Scan(&wsID)
-	if err != nil {
-		return
-	}
-	d.Exec(`DELETE FROM claude_sessions WHERE session_id = ?`, sessionID)
-
-	var remaining int
-	d.QueryRow(`SELECT COUNT(*) FROM claude_sessions WHERE workstream_id = ?`, wsID).Scan(&remaining)
-	if remaining == 0 {
-		d.Exec(`DELETE FROM tmux_sessions WHERE workstream_id = ?`, wsID)
-		d.Exec(`DELETE FROM workstreams WHERE id = ?`, wsID)
-	}
+func DeleteWorkstream(d *sql.DB, wsID int64) {
+	d.Exec(`DELETE FROM claude_sessions WHERE workstream_id = ?`, wsID)
+	d.Exec(`DELETE FROM tmux_sessions WHERE workstream_id = ?`, wsID)
+	d.Exec(`DELETE FROM workstreams WHERE id = ?`, wsID)
 }
 
 func LoadSummaryDB(d *sql.DB, sessionID string) string {
@@ -317,4 +191,54 @@ func LoadSummaryDB(d *sql.DB, sessionID string) string {
 	d.QueryRow(`SELECT summary FROM claude_sessions WHERE session_id = ?`,
 		sessionID).Scan(&summary)
 	return summary
+}
+
+func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID, claudeName string) {
+	d.Exec(
+		`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, display_name) VALUES (?, ?, ?)`,
+		workstreamID, sessionID, claudeName,
+	)
+}
+
+// LoadClaudeNameForTmuxSession returns the claude name for any session in the given tmux session's workstream.
+func LoadClaudeNameForTmuxSession(d *sql.DB, tmuxSession string) string {
+	tmuxID := "ws-" + tmuxSession
+	var name string
+	d.QueryRow(`
+		SELECT c.display_name FROM claude_sessions c
+		JOIN tmux_sessions t ON t.workstream_id = c.workstream_id
+		WHERE t.tmux_id = ? AND c.display_name != ''
+		LIMIT 1
+	`, tmuxID).Scan(&name)
+	return name
+}
+
+// UpdateSessionID updates the session_id for a claude_session that has an empty session_id in the given workstream.
+func UpdateSessionID(d *sql.DB, workstreamID int64, sessionID string) {
+	d.Exec(
+		`UPDATE claude_sessions SET session_id = ? WHERE workstream_id = ? AND session_id = '' LIMIT 1`,
+		sessionID, workstreamID,
+	)
+}
+
+func AllWorkstreamDisplayNames(d *sql.DB) map[string]string {
+	result := make(map[string]string)
+	rows, err := d.Query(`
+		SELECT t.display_name, c.display_name
+		FROM tmux_sessions t
+		JOIN claude_sessions c ON c.workstream_id = t.workstream_id
+		WHERE c.display_name != ''
+	`)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tmuxName, claudeName string
+		rows.Scan(&tmuxName, &claudeName)
+		if _, exists := result[tmuxName]; !exists {
+			result[tmuxName] = claudeName
+		}
+	}
+	return result
 }

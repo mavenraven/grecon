@@ -999,10 +999,6 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			projName, relDir, branch := gitProjectInfo(cwd)
 			rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 			status := debounceStatus(sessionID, rawStatus)
-			if d := db.Get(); d != nil {
-					db.SaveTmuxNameDB(d, sessionID, live.tmuxSession)
-				}
-			saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 			subagents := discoverSubagents(path)
 			claudeName := loadClaudeNameDB(sessionID)
@@ -1108,10 +1104,6 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				projName, relDir, branch := gitProjectInfo(cwd)
 				rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 				status := debounceStatus(sessionID, rawStatus)
-				if d := db.Get(); d != nil {
-					db.SaveTmuxNameDB(d, sessionID, live.tmuxSession)
-				}
-				saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 				subagents := discoverSubagents(resolvedPath)
 				claudeName := loadClaudeNameDB(sessionID)
@@ -1143,10 +1135,6 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					PendingBgCalls:    info.pendingBgCalls,
 				}
 			} else {
-				if d := db.Get(); d != nil {
-					db.SaveTmuxNameDB(d, sessionID, live.tmuxSession)
-				}
-				saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 				projName, relDir, branch := gitProjectInfo(live.paneCWD)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 				claudeName := loadClaudeNameDB(sessionID)
@@ -1662,16 +1650,6 @@ func loadClaudeNameDB(sessionID string) string {
 	return db.LoadClaudeNameDB(d, sessionID)
 }
 
-func saveClaudeNameFromEnvDB(sessionID string, env map[string]map[string]string, tmuxSession string) {
-	name := readEnvFromBatch(env, tmuxSession, "RECON_CLAUDE_NAME")
-	if name != "" {
-		d := db.Get()
-		if d != nil {
-			db.SaveClaudeNameDB(d, sessionID, name)
-		}
-	}
-}
-
 func readTmuxTagsFrom(env map[string]map[string]string, sessionName string) map[string]string {
 	tags := make(map[string]string)
 	vars, ok := env[sessionName]
@@ -1696,13 +1674,6 @@ func findJSONLForResumedSession(pid int) string {
 		return ""
 	}
 	return findJSONLBySessionID(origID)
-}
-
-func readEnvFromBatch(env map[string]map[string]string, sessionName, varName string) string {
-	if vars, ok := env[sessionName]; ok {
-		return vars[varName]
-	}
-	return ""
 }
 
 func parseResumeIDFromPS(pid int) string {

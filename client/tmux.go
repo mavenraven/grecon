@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"grecon/db"
 	"grecon/server"
 )
 
@@ -38,10 +39,6 @@ func CreateSession(name, cwd, claudeName string, command *string, tags []string,
 		args = append(args, "-e", fmt.Sprintf("RECON_TAGS=%s", tagsVal))
 	}
 
-	if claudeName != "" {
-		args = append(args, "-e", fmt.Sprintf("RECON_CLAUDE_NAME=%s", claudeName))
-	}
-
 	if command != nil {
 		parts := strings.Fields(*command)
 		args = append(args, parts...)
@@ -56,17 +53,21 @@ func CreateSession(name, cwd, claudeName string, command *string, tags []string,
 		}
 	}
 
-	cmd := exec.Command("tmux", args...)
-	if err := cmd.Run(); err != nil {
+	tmuxCmd := exec.Command("tmux", args...)
+	if err := tmuxCmd.Run(); err != nil {
 		return "", fmt.Errorf("failed to create tmux session: %w", err)
 	}
 
+	var worktreePath string
 	if worktree {
+		worktreePath = cwd
 		server.SendCommand(server.Command{
 			Type:        "fix-default-path",
 			TmuxSession: sessionName,
 		})
 	}
+
+	db.CreateWorkstream(sessionName, claudeName, worktreePath)
 
 	return sessionName, nil
 }

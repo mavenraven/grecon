@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -45,11 +44,7 @@ func RunServer() {
 	}
 	defer d.Close()
 
-	if err := db.ImportExistingState(d); err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to import state: %v\n", err)
-	}
-
-	RestoreSessions()
+	Reconcile(d)
 
 	path := SocketPath()
 	os.MkdirAll(filepath.Dir(path), 0o755)
@@ -140,24 +135,8 @@ func RunServer() {
 
 				broadcast(sessions)
 
-				var liveSessions []db.LiveSession
-				for _, s := range sessions {
-					var worktree string
-					if strings.Contains(s.CWD, "/.claude/worktrees/") {
-						worktree = s.CWD
-					}
-					liveSessions = append(liveSessions, db.LiveSession{
-						SessionID:   s.SessionID,
-						TmuxSession: s.TmuxSession,
-						ClaudeName:  s.ClaudeName,
-						JSONLPath:   s.JSONLPath,
-						Summary:     s.Summary,
-						Worktree:    worktree,
-					})
-				}
-				db.SyncLiveSessions(d, liveSessions)
-
-				if pollCount%20 == 0 {
+				if pollCount%10 == 0 {
+					Reconcile(d)
 					go db.PruneDeadSessions(d)
 				}
 			}
