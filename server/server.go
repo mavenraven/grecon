@@ -42,9 +42,9 @@ func SerializeSessions(sessions []*Session) []byte {
 func lockPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "/tmp/.grecon/grecon.pid"
+		return "/tmp/.grecon/grecon.lock"
 	}
-	return filepath.Join(home, ".grecon", "grecon.pid")
+	return filepath.Join(home, ".grecon", "grecon.lock")
 }
 
 func acquireLock() {
