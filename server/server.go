@@ -361,10 +361,18 @@ func markInactiveSessions(d *sql.DB, liveSessions []*Session) {
 }
 
 func discoverTmuxSessions(prev map[string]*Session) []*Session {
+	d := db.Get()
+	knownTmux := make(map[string]bool)
+	if d != nil {
+		for _, ws := range db.AllWorkstreams(d) {
+			knownTmux[ws.DisplayName] = true
+		}
+	}
+
 	all := DiscoverSessions(prev)
 	var sessions []*Session
 	for _, s := range all {
-		if s.TmuxSession != "" {
+		if s.TmuxSession != "" && knownTmux[s.TmuxSession] {
 			sessions = append(sessions, s)
 		}
 	}
