@@ -9,7 +9,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"grecon/db"
@@ -37,7 +40,44 @@ func SerializeSessions(sessions []*Session) []byte {
 	return buf
 }
 
+func lockPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp/.grecon/grecon.pid"
+	}
+	return filepath.Join(home, ".grecon", "grecon.pid")
+}
+
+func acquireLock() {
+	lp := lockPath()
+	data, err := os.ReadFile(lp)
+	if err == nil {
+		pidStr := strings.TrimSpace(string(data))
+		if pidStr != "" {
+			pid, err := strconv.Atoi(pidStr)
+			if err == nil {
+				proc, err := os.FindProcess(pid)
+				if err == nil {
+					if proc.Signal(syscall.Signal(0)) == nil {
+						fmt.Fprintf(os.Stderr, "grecon server already running (pid %d)\n", pid)
+						os.Exit(1)
+					}
+				}
+			}
+		}
+	}
+	os.MkdirAll(filepath.Dir(lp), 0o755)
+	os.WriteFile(lp, []byte(strconv.Itoa(os.Getpid())), 0o644)
+}
+
+func releaseLock() {
+	os.Remove(lockPath())
+}
+
 func RunServer() {
+	acquireLock()
+	defer releaseLock()
+
 	d, err := db.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
