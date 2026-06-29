@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -65,9 +66,11 @@ func acquireLock() {
 				}
 			}
 		}
+		fmt.Fprintf(os.Stderr, "Removing stale lock file %s\n", lp)
 	}
 	os.MkdirAll(filepath.Dir(lp), 0o755)
-	os.WriteFile(lp, []byte(strconv.Itoa(os.Getpid())), 0o644)
+	content := fmt.Sprintf("%d\n# This is a grecon server lock file. It is safe to remove if grecon server is not running.\n", os.Getpid())
+	os.WriteFile(lp, []byte(content), 0o644)
 }
 
 func releaseLock() {
@@ -77,6 +80,14 @@ func releaseLock() {
 func RunServer() {
 	acquireLock()
 	defer releaseLock()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		releaseLock()
+		os.Exit(0)
+	}()
 
 	d, err := db.Open()
 	if err != nil {
