@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -119,6 +120,27 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 			groups = append(groups, group{name: name, sessions: []*server.Session{s}})
 		}
 	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		iAllOff := true
+		for _, s := range groups[i].sessions {
+			if s.Status != server.StatusInactive {
+				iAllOff = false
+				break
+			}
+		}
+		jAllOff := true
+		for _, s := range groups[j].sessions {
+			if s.Status != server.StatusInactive {
+				jAllOff = false
+				break
+			}
+		}
+		if iAllOff != jAllOff {
+			return !iAllOff
+		}
+		return false
+	})
 
 	var rows []DisplayRow
 	for _, g := range groups {
@@ -252,6 +274,13 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 		a.FilterText = ""
 		a.FilterCursor = 0
 		a.Selected = 0
+	case "g":
+		a.Selected = 0
+	case "G":
+		count := a.SelectableCount()
+		if count > 0 {
+			a.Selected = count - 1
+		}
 	case "j", "down":
 		count := a.SelectableCount()
 		if count > 0 && a.Selected+1 < count {

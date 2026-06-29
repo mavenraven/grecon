@@ -224,6 +224,10 @@ The discovery loop builds the live view for the TUI:
 
 **The discovery loop never writes to the database.** Everything it computes (tokens, status, model, background tasks) lives in memory only.
 
+### Open questions
+
+- What should happen when a workstream's worktree no longer exists on disk? Delete the workstream? Keep it as inactive? TBD.
+
 ### Pruning (periodic)
 
 Every ~10 seconds, the server prunes stale data:
