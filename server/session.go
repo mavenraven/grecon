@@ -205,6 +205,7 @@ type parsedInfo struct {
 	cwd             string
 	lastActivity    string
 	fileSize        uint64
+	claudeName      string
 	wakeup          *Wakeup
 	backgroundTasks []*BackgroundTask
 	pendingBgCalls  map[string]*BackgroundTask
@@ -413,12 +414,13 @@ type usageEntry struct {
 	CacheReadInputTokens     uint64 `json:"cache_read_input_tokens"`
 }
 
-func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevModel, prevEffort, prevActivity string, prevWakeup *Wakeup, prevBgTasks []*BackgroundTask, prevPending map[string]*BackgroundTask) parsedInfo {
+func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevModel, prevEffort, prevActivity, prevClaudeName string, prevWakeup *Wakeup, prevBgTasks []*BackgroundTask, prevPending map[string]*BackgroundTask) parsedInfo {
 	f, err := os.Open(path)
 	if err != nil {
 		return parsedInfo{
 			inputTokens: prevInput, outputTokens: prevOutput,
 			model: prevModel, effort: prevEffort, lastActivity: prevActivity,
+			claudeName: prevClaudeName,
 			wakeup: prevWakeup, backgroundTasks: prevBgTasks,
 			pendingBgCalls: prevPending,
 		}
@@ -432,7 +434,8 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 		return parsedInfo{
 			inputTokens: prevInput, outputTokens: prevOutput,
 			model: prevModel, effort: prevEffort, lastActivity: prevActivity,
-			fileSize: fileSize, wakeup: prevWakeup, backgroundTasks: prevBgTasks,
+			fileSize: fileSize, claudeName: prevClaudeName,
+			wakeup: prevWakeup, backgroundTasks: prevBgTasks,
 			pendingBgCalls: prevPending,
 		}
 	}
@@ -454,6 +457,7 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 		lastActivity = ""
 	}
 
+	var claudeName string
 	wakeup := prevWakeup
 	bgTasks := make(map[string]*BackgroundTask)
 	for _, t := range prevBgTasks {
@@ -475,6 +479,16 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || !strings.Contains(trimmed, `"type"`) {
 			continue
+		}
+
+		if strings.Contains(trimmed, `"agent-name"`) {
+			var entry struct {
+				Type      string `json:"type"`
+				AgentName string `json:"agentName"`
+			}
+			if json.Unmarshal([]byte(trimmed), &entry) == nil && entry.Type == "agent-name" && entry.AgentName != "" {
+				claudeName = entry.AgentName
+			}
 		}
 
 		if strings.Contains(trimmed, "<task-notification>") {
@@ -591,7 +605,8 @@ func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevMod
 	return parsedInfo{
 		inputTokens: totalInput, outputTokens: totalOutput,
 		model: model, effort: effort, cwd: cwd,
-		lastActivity: lastActivity, fileSize: fileSize, wakeup: wakeup,
+		lastActivity: lastActivity, fileSize: fileSize, claudeName: claudeName,
+		wakeup: wakeup,
 		backgroundTasks: activeBg, pendingBgCalls: pendingBgCalls,
 	}
 }
@@ -967,7 +982,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			prev := prevSessions[sessionID]
 
 			var prevSize, prevIn, prevOut uint64
-			var prevModel, prevEffort, prevAct string
+			var prevModel, prevEffort, prevAct, prevClaudeName string
 			var prevWakeup *Wakeup
 			var prevBgTasks []*BackgroundTask
 			var prevPending map[string]*BackgroundTask
@@ -978,12 +993,13 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				prevModel = prev.Model
 				prevEffort = prev.Effort
 				prevAct = prev.LastActivity
+				prevClaudeName = prev.ClaudeName
 				prevWakeup = prev.Wakeup
 				prevBgTasks = prev.BackgroundTasks
 				prevPending = prev.PendingBgCalls
 			}
 
-			info := parseJSONL(path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks, prevPending)
+			info := parseJSONL(path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevClaudeName, prevWakeup, prevBgTasks, prevPending)
 			markBgTaskLiveness(info.backgroundTasks, live.pid, pt)
 			info.backgroundTasks = pruneStaleBgTasks(info.backgroundTasks)
 			cwd := info.cwd
@@ -1003,7 +1019,10 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 			subagents := discoverSubagents(path)
-			claudeName := loadClaudeNameDB(sessionID)
+			claudeName := info.claudeName
+			if claudeName == "" {
+				claudeName = loadClaudeNameDB(sessionID)
+			}
 
 			results[idx] = &Session{
 				SessionID:         sessionID,
@@ -1080,7 +1099,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			if resolvedPath != "" {
 				prev := prevSessions[sessionID]
 				var prevSize, prevIn, prevOut uint64
-				var prevModel, prevEffort, prevAct string
+				var prevModel, prevEffort, prevAct, prevClaudeName string
 				var prevWakeup *Wakeup
 				var prevBgTasks []*BackgroundTask
 				var prevPending map[string]*BackgroundTask
@@ -1091,12 +1110,13 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					prevModel = prev.Model
 					prevEffort = prev.Effort
 					prevAct = prev.LastActivity
+					prevClaudeName = prev.ClaudeName
 					prevWakeup = prev.Wakeup
 					prevBgTasks = prev.BackgroundTasks
 					prevPending = prev.PendingBgCalls
 				}
 
-				info := parseJSONL(resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks, prevPending)
+				info := parseJSONL(resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevClaudeName, prevWakeup, prevBgTasks, prevPending)
 				markBgTaskLiveness(info.backgroundTasks, live.pid, pt)
 			info.backgroundTasks = pruneStaleBgTasks(info.backgroundTasks)
 				cwd := info.cwd
@@ -1112,7 +1132,10 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				saveClaudeNameFromEnvDB(sessionID, tmuxEnv, live.tmuxSession)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 				subagents := discoverSubagents(resolvedPath)
-				claudeName := loadClaudeNameDB(sessionID)
+				claudeName := info.claudeName
+				if claudeName == "" {
+					claudeName = loadClaudeNameDB(sessionID)
+				}
 
 				unmatchedResults[idx] = &Session{
 					SessionID:         sessionID,
