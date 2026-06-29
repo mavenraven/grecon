@@ -28,6 +28,8 @@ var migrations = []string{
 	);`,
 
 	`ALTER TABLE claude_sessions ADD COLUMN summary TEXT NOT NULL DEFAULT '';`,
+
+	`ALTER TABLE claude_sessions ADD COLUMN active INTEGER NOT NULL DEFAULT 1;`,
 }
 
 func migrate(d *sql.DB) error {

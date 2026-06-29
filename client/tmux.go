@@ -113,6 +113,36 @@ func whichClaude() string {
 	return path
 }
 
+func ReactivateSession(sessionID, tmuxSession string) {
+	d := db.Get()
+	if d == nil {
+		return
+	}
+	db.SetSessionActive(d, sessionID, true)
+
+	if !tmuxSessionExists(tmuxSession) {
+		cwd := server.FindSessionCWD(sessionID)
+		if cwd == "" || !server.ValidateCWD(cwd) {
+			return
+		}
+		claudePath := whichClaude()
+		exec.Command("tmux",
+			"new-session", "-d", "-s", tmuxSession, "-c", cwd,
+			claudePath, "--resume", sessionID,
+		).Run()
+	} else {
+		cwd := server.FindSessionCWD(sessionID)
+		if cwd == "" {
+			cwd = "."
+		}
+		claudePath := whichClaude()
+		exec.Command("tmux",
+			"new-window", "-t", tmuxSession, "-c", cwd,
+			claudePath, "--resume", sessionID,
+		).Run()
+	}
+}
+
 func KillSession(name string) bool {
 	return exec.Command("tmux", "kill-session", "-t", name).Run() == nil
 }

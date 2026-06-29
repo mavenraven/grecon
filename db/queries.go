@@ -17,6 +17,7 @@ type WorkstreamInfo struct {
 type ClaudeSessionInfo struct {
 	SessionID   string
 	DisplayName string
+	Active      bool
 }
 
 func CreateWorkstream(tmuxSession, claudeName, worktree string) {
@@ -81,7 +82,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	for i := range workstreams {
 		ws := &workstreams[i]
 		crows, err := d.Query(`
-			SELECT session_id, display_name FROM claude_sessions
+			SELECT session_id, display_name, active FROM claude_sessions
 			WHERE workstream_id = ?
 		`, ws.WorkstreamID)
 		if err != nil {
@@ -89,7 +90,9 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 		}
 		for crows.Next() {
 			var cs ClaudeSessionInfo
-			crows.Scan(&cs.SessionID, &cs.DisplayName)
+			var activeVal int
+			crows.Scan(&cs.SessionID, &cs.DisplayName, &activeVal)
+			cs.Active = activeVal == 1
 			ws.Sessions = append(ws.Sessions, cs)
 		}
 		crows.Close()
@@ -184,6 +187,14 @@ func DeleteWorkstream(d *sql.DB, wsID int64) {
 	d.Exec(`DELETE FROM claude_sessions WHERE workstream_id = ?`, wsID)
 	d.Exec(`DELETE FROM tmux_sessions WHERE workstream_id = ?`, wsID)
 	d.Exec(`DELETE FROM workstreams WHERE id = ?`, wsID)
+}
+
+func SetSessionActive(d *sql.DB, sessionID string, active bool) {
+	val := 0
+	if active {
+		val = 1
+	}
+	d.Exec(`UPDATE claude_sessions SET active = ? WHERE session_id = ?`, val, sessionID)
 }
 
 func LoadSummaryDB(d *sql.DB, sessionID string) string {

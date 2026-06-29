@@ -26,6 +26,7 @@ const (
 	StatusWorking
 	StatusIdle
 	StatusInput
+	StatusInactive
 )
 
 func (s SessionStatus) Label() string {
@@ -38,6 +39,8 @@ func (s SessionStatus) Label() string {
 		return "Idle"
 	case StatusInput:
 		return "Input"
+	case StatusInactive:
+		return "Inactive"
 	default:
 		return "Unknown"
 	}
@@ -61,6 +64,8 @@ func (s *SessionStatus) UnmarshalJSON(data []byte) error {
 		*s = StatusIdle
 	case "Input":
 		*s = StatusInput
+	case "Inactive":
+		*s = StatusInactive
 	}
 	return nil
 }

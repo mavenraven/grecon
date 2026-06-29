@@ -19,7 +19,14 @@ func Reconcile(d *sql.DB) {
 	claudePath := whichClaudeBinary()
 
 	for _, ws := range workstreams {
-		if len(ws.Sessions) == 0 {
+		var activeSessions []db.ClaudeSessionInfo
+		for _, cs := range ws.Sessions {
+			if cs.Active {
+				activeSessions = append(activeSessions, cs)
+			}
+		}
+
+		if len(activeSessions) == 0 {
 			continue
 		}
 
@@ -27,7 +34,7 @@ func Reconcile(d *sql.DB) {
 			continue
 		}
 
-		first := ws.Sessions[0]
+		first := activeSessions[0]
 		cwd := ws.Worktree
 		if cwd == "" {
 			cwd = FindSessionCWD(first.SessionID)
@@ -47,7 +54,7 @@ func Reconcile(d *sql.DB) {
 		}
 		fmt.Fprintf(os.Stderr, "reconcile: restored %s\n", ws.DisplayName)
 
-		for _, cs := range ws.Sessions[1:] {
+		for _, cs := range activeSessions[1:] {
 			csCwd := FindSessionCWD(cs.SessionID)
 			if csCwd == "" || !ValidateCWD(csCwd) {
 				csCwd = cwd

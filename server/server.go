@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -122,6 +123,8 @@ func RunServer() {
 				sessions = discoverTmuxSessions(prev)
 				pollMs := time.Since(pollStart).Milliseconds()
 
+				sessions = appendInactiveSessions(d, sessions)
+
 				prev = make(map[string]*Session)
 				for _, s := range sessions {
 					prev[s.SessionID] = s
@@ -136,7 +139,7 @@ func RunServer() {
 				broadcast(sessions)
 
 				if pollCount%10 == 0 {
-					Reconcile(d)
+					markInactiveSessions(d, sessions)
 					go db.PruneDeadSessions(d)
 				}
 			}
@@ -248,6 +251,45 @@ func readFrame(conn net.Conn, deadline time.Duration) []*Session {
 		return nil
 	}
 	return sessions
+}
+
+func appendInactiveSessions(d *sql.DB, liveSessions []*Session) []*Session {
+	liveIDs := make(map[string]bool)
+	for _, s := range liveSessions {
+		liveIDs[s.SessionID] = true
+	}
+
+	workstreams := db.AllWorkstreams(d)
+	for _, ws := range workstreams {
+		for _, cs := range ws.Sessions {
+			if !cs.Active && !liveIDs[cs.SessionID] {
+				liveSessions = append(liveSessions, &Session{
+					SessionID:   cs.SessionID,
+					TmuxSession: ws.DisplayName,
+					ClaudeName:  cs.DisplayName,
+					Status:      StatusInactive,
+				})
+			}
+		}
+	}
+	return liveSessions
+}
+
+func markInactiveSessions(d *sql.DB, liveSessions []*Session) {
+	liveIDs := make(map[string]bool)
+	for _, s := range liveSessions {
+		liveIDs[s.SessionID] = true
+	}
+
+	workstreams := db.AllWorkstreams(d)
+	for _, ws := range workstreams {
+		for _, cs := range ws.Sessions {
+			if cs.Active && !liveIDs[cs.SessionID] {
+				db.SetSessionActive(d, cs.SessionID, false)
+				fmt.Fprintf(os.Stderr, "marked inactive: %s (%s)\n", cs.DisplayName, cs.SessionID[:min(8, len(cs.SessionID))])
+			}
+		}
+	}
 }
 
 func discoverTmuxSessions(prev map[string]*Session) []*Session {

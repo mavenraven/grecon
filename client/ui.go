@@ -415,6 +415,8 @@ func formatStatus(status server.SessionStatus) string {
 		dot, label, ansi = "●", "Idle", "90"
 	case server.StatusInput:
 		dot, label, ansi = "●", "Input", "33"
+	case server.StatusInactive:
+		dot, label, ansi = "○", "Off", "90"
 	}
 	return ansiColor(ansi, dot+" "+label)
 }

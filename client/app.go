@@ -262,7 +262,9 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 		}
 	case "enter":
 		if s := a.SelectedSession(); s != nil {
-			if s.PaneTarget != "" {
+			if s.Status == server.StatusInactive {
+				ReactivateSession(s.SessionID, s.TmuxSession)
+			} else if s.PaneTarget != "" {
 				a.SwitchTarget = s.PaneTarget
 				a.ShouldQuit = true
 			}
