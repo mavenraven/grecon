@@ -62,7 +62,7 @@ func SendCommand(cmd Command) (*CommandResponse, error) {
 		return nil, err
 	}
 
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	var respLenBuf [4]byte
 	if _, err := io.ReadFull(conn, respLenBuf[:]); err != nil {
 		return nil, err
@@ -190,13 +190,15 @@ func handleCreateSession(cmd Command) CommandResponse {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("tmux: %v", err)}
 	}
 
-	// Send a period so Claude persists the session to disk
-	exec.Command("tmux", "send-keys", "-t", sessionName, ".", "Enter").Run()
-
-	// Poll for the session ID
+	// Poll until Claude is ready, send a period, wait for session ID
 	sessionID := ""
-	for i := 0; i < 30; i++ {
+	periodSent := false
+	for i := 0; i < 60; i++ {
 		time.Sleep(500 * time.Millisecond)
+		if !periodSent {
+			exec.Command("tmux", "send-keys", "-t", sessionName, ".", "Enter").Run()
+			periodSent = true
+		}
 		sessionID = findSessionIDForTmux(sessionName)
 		if sessionID != "" {
 			break
