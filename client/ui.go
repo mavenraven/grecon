@@ -450,7 +450,7 @@ func formatStatus(status server.SessionStatus) string {
 	case server.StatusWorking:
 		dot, label, ansi = "●", "Work", "32"
 	case server.StatusIdle:
-		dot, label, ansi = "●", "Idle", "90"
+		dot, label, ansi = "●", "Idle", "37"
 	case server.StatusInput:
 		dot, label, ansi = "●", "Input", "33"
 	case server.StatusInactive:
