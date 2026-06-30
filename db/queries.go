@@ -88,7 +88,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	return workstreams
 }
 
-func PruneDeadSessions(d *sql.DB) {
+func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 	rows, err := d.Query(`SELECT id, session_id, workstream_id FROM claude_sessions`)
 	if err != nil {
 		return
@@ -113,18 +113,34 @@ func PruneDeadSessions(d *sql.DB) {
 		}
 	}
 
-	d.Exec(`
-		DELETE FROM workstreams WHERE id IN (
-			SELECT w.id FROM workstreams w
-			LEFT JOIN claude_sessions c ON c.workstream_id = w.id
-			WHERE c.id IS NULL
-		)
-	`)
-	d.Exec(`
-		DELETE FROM tmux_sessions WHERE workstream_id NOT IN (
-			SELECT id FROM workstreams
-		)
-	`)
+	liveWSIDs := make(map[int64]bool)
+	tmuxRows, err := d.Query(`SELECT workstream_id, display_name FROM tmux_sessions`)
+	if err == nil {
+		for tmuxRows.Next() {
+			var wsID int64
+			var name string
+			tmuxRows.Scan(&wsID, &name)
+			if liveTmuxSessions[name] {
+				liveWSIDs[wsID] = true
+			}
+		}
+		tmuxRows.Close()
+	}
+
+	for _, ws := range AllWorkstreams(d) {
+		if liveWSIDs[ws.WorkstreamID] {
+			continue
+		}
+		hasSession := false
+		for range ws.Sessions {
+			hasSession = true
+			break
+		}
+		if !hasSession {
+			d.Exec(`DELETE FROM tmux_sessions WHERE workstream_id = ?`, ws.WorkstreamID)
+			d.Exec(`DELETE FROM workstreams WHERE id = ?`, ws.WorkstreamID)
+		}
+	}
 }
 
 func jsonlExists(sessionID string) bool {

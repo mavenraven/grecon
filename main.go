@@ -42,6 +42,9 @@ func main() {
 		Short: "Interactive form to create a new tmux session",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, err := server.RequireFetch(); err != nil {
+				return err
+			}
 			var initialName string
 			if len(args) > 0 {
 				initialName = args[0]

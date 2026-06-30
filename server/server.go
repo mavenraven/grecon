@@ -187,7 +187,13 @@ func RunServer() {
 				broadcast(sessions)
 
 				if pollCount%10 == 0 {
-					go db.PruneDeadSessions(d)
+					liveTmux := make(map[string]bool)
+					for _, s := range sessions {
+						if s.TmuxSession != "" {
+							liveTmux[s.TmuxSession] = true
+						}
+					}
+					go db.PruneDeadSessions(d, liveTmux)
 				}
 			}
 		}
