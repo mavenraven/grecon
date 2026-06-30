@@ -6,16 +6,24 @@ import (
 	"os"
 
 	"grecon/client"
+	"grecon/db"
 	"grecon/server"
 
 	"github.com/spf13/cobra"
 )
 
 func main() {
+	var instanceName string
+
 	rootCmd := &cobra.Command{
 		Use:     "grecon",
 		Short:   "Monitor and manage Claude Code sessions running in tmux",
 		Version: "0.6.1",
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if instanceName != "" {
+				db.SetInstance(instanceName)
+			}
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, err := client.RunTUI()
 			if err != nil {
@@ -118,6 +126,7 @@ func main() {
 		},
 	}
 
+	rootCmd.PersistentFlags().StringVarP(&instanceName, "instance", "i", "", "Instance name (namespaces DB, sockets, lock file)")
 	rootCmd.AddCommand(newCmd, launchCmd, serverCmd, jsonCmd, nameCmd)
 
 	if err := rootCmd.Execute(); err != nil {

@@ -36,9 +36,9 @@ type CommandResponse struct {
 func CommandSocketPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "/tmp/.grecon/grecon-cmd.sock"
+		return "/tmp/.grecon/" + db.Instance() + "-cmd.sock"
 	}
-	return filepath.Join(home, ".grecon", "grecon-cmd.sock")
+	return filepath.Join(home, ".grecon", db.Instance()+"-cmd.sock")
 }
 
 func SendCommand(cmd Command) (*CommandResponse, error) {

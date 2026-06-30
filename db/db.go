@@ -10,13 +10,22 @@ import (
 )
 
 var global *sql.DB
+var instance = "grecon"
+
+func SetInstance(name string) {
+	instance = name
+}
+
+func Instance() string {
+	return instance
+}
 
 func Path() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".grecon", "grecon.db")
+	return filepath.Join(home, ".grecon", instance+".db")
 }
 
 func Open() (*sql.DB, error) {

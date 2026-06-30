@@ -23,9 +23,9 @@ import (
 func SocketPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "/tmp/.grecon/grecon.sock"
+		return "/tmp/.grecon/" + db.Instance() + ".sock"
 	}
-	return filepath.Join(home, ".grecon", "grecon.sock")
+	return filepath.Join(home, ".grecon", db.Instance()+".sock")
 }
 
 func SerializeSessions(sessions []*Session) []byte {
@@ -45,9 +45,9 @@ func SerializeSessions(sessions []*Session) []byte {
 func lockPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "/tmp/.grecon/grecon.lock"
+		return "/tmp/.grecon/" + db.Instance() + ".lock"
 	}
-	return filepath.Join(home, ".grecon", "grecon.lock")
+	return filepath.Join(home, ".grecon", db.Instance()+".lock")
 }
 
 func acquireLock() {
