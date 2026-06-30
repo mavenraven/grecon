@@ -224,6 +224,12 @@ The discovery loop builds the live view for the TUI:
 
 **The discovery loop never writes to the database.** Everything it computes (tokens, status, model, background tasks) lives in memory only.
 
+### Known bugs
+
+- **Reactivated session shows "—" instead of claude name.** When a session is reactivated, the reconciliation loop discovers the new Claude process and adds it to the DB with empty display_name because the JSONL agent-name isn't written yet. Need to retry reading the name on subsequent polls.
+- **Session shows Idle after Claude exits instead of Off.** When Claude exits, the session stays showing as Idle instead of being marked inactive. The reconciliation loop isn't detecting the process is gone, or discovery is still finding something in the pane.
+- **Cannot restart a session stuck as Idle.** Since the reactivation code only triggers on StatusInactive (Off), a session that shows Idle but has no Claude process can't be restarted from the TUI. Related to the above — root cause is the session not being marked inactive when Claude exits.
+
 ### Open questions
 
 - What should happen when a workstream's worktree no longer exists on disk? Delete the workstream? Keep it as inactive? TBD.
