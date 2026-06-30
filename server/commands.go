@@ -170,7 +170,9 @@ func handleCreateSession(cmd Command) CommandResponse {
 		worktreePath = cmd.CWD
 	}
 
-	db.CreateWorkstreamDB(d, sessionName, worktreePath)
+	if err := db.CreateWorkstreamDB(d, sessionName, worktreePath); err != nil {
+		return CommandResponse{OK: false, Error: fmt.Sprintf("create workstream: %v", err)}
+	}
 
 	args := []string{"new-session", "-d", "-s", sessionName, "-c", cmd.CWD}
 

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -20,16 +21,16 @@ type ClaudeSessionInfo struct {
 	Active      bool
 }
 
-func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) {
+func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) error {
 	tx, err := d.Begin()
 	if err != nil {
-		return
+		return fmt.Errorf("begin: %w", err)
 	}
 
 	result, err := tx.Exec(`INSERT INTO workstreams (worktree) VALUES (?)`, worktree)
 	if err != nil {
 		tx.Rollback()
-		return
+		return fmt.Errorf("insert workstream: %w", err)
 	}
 	wsID, _ := result.LastInsertId()
 
@@ -40,10 +41,10 @@ func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) {
 	)
 	if err != nil {
 		tx.Rollback()
-		return
+		return fmt.Errorf("insert tmux_session: %w", err)
 	}
 
-	tx.Commit()
+	return tx.Commit()
 }
 
 func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
