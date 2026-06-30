@@ -108,7 +108,7 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 	rows.Close()
 
 	for _, c := range candidates {
-		if c.sessionID != "" && !jsonlExists(c.sessionID) {
+		if c.sessionID == "" || !jsonlExists(c.sessionID) {
 			d.Exec(`DELETE FROM claude_sessions WHERE id = ?`, c.id)
 		}
 	}
