@@ -112,12 +112,13 @@ All deletes are soft deletes (set `deleted_at` timestamp). Queries filter on `de
 
 ## Testing
 
-146 tests using Afero `MemMapFs` for filesystem faking, a `CommandRunner` interface for tmux/process commands, and real SQLite with `:memory:` for the database.
+174 tests across 3 packages using Afero `MemMapFs` for filesystem faking, a `CommandRunner` interface for tmux/process commands, real SQLite with `:memory:` for the database, and bubbletea model driving for TUI integration tests.
 
 ### Test infrastructure
-- **`server/env.go`** — `Env` struct with `afero.Fs`, `CommandRunner` interface, injected `Clock`, and `Home` path. `RealEnv()` for production, test helpers for tests.
+- **`server/env.go`** — `Env` struct with `afero.Fs`, `CommandRunner` interface (Run/Output/RunWithStdin), injected `Clock`, and `Home` path. `RealEnv()` for production, test helpers for tests.
 - **`db/testing.go`** — `OpenTestDB()` returns an in-memory SQLite with all migrations applied
 - **`server/testutil_test.go`** — `fakeCmd` (records Run/Output/RunWithStdin calls), `testEnv()` helper, JSONL writing helpers
+- **`client/ui_test.go`** and **`client/integration_test.go`** — drive the TUI by constructing `tuiModel`, sending `tea.KeyMsg`, and asserting on state and rendered view. No server or external dependencies needed.
 
 ### Running tests
 ```
@@ -133,10 +134,12 @@ go test ./... -timeout 30s
 - `server/restore_test.go` — session restoration logic
 - `server/summary_test.go` — activity extraction, tool descriptions, summary generation
 - `server/network_test.go` — frame decoding, subscription lifecycle
-- `server/commands_test.go` — command handler error paths, fixDefaultPath
+- `server/commands_test.go` — command handler error paths, fixDefaultPath, reactivation sanity checks
 - `server/filter_test.go` — discoverTmuxSessions DB filter
 - `server/bg_test.go` — cleanupPendingCalls, isSpinner
 - `server/serialize_test.go` — frame serialization
+- `client/ui_test.go` — n key form switching, Esc return, filter guard
+- `client/integration_test.go` — full TUI integration: session display, grouping, vim navigation (j/k/G/gg/M/ctrl-d/ctrl-u), bounds clamping, Enter/x/n/q keys, filter search, status display, empty list safety
 
 ## Code layout
 
