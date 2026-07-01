@@ -111,18 +111,19 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 	seen := make(map[string]int)
 
 	for _, s := range sessions {
-		name := s.TmuxDisplayName
-		if name == "" {
-			name = s.TmuxSession
+		key := s.TmuxSession
+		if key == "" {
+			key = "—"
 		}
-		if name == "" {
-			name = "—"
+		displayName := s.TmuxDisplayName
+		if displayName == "" {
+			displayName = key
 		}
-		if idx, ok := seen[name]; ok {
+		if idx, ok := seen[key]; ok {
 			groups[idx].sessions = append(groups[idx].sessions, s)
 		} else {
-			seen[name] = len(groups)
-			groups = append(groups, group{name: name, sessions: []*server.Session{s}})
+			seen[key] = len(groups)
+			groups = append(groups, group{name: displayName, sessions: []*server.Session{s}})
 		}
 	}
 
