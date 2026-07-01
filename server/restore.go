@@ -11,12 +11,16 @@ import (
 )
 
 func Reconcile(d *sql.DB) {
+	reconcileWithEnv(RealEnv(), d)
+}
+
+func reconcileWithEnv(env *Env, d *sql.DB) {
 	workstreams := db.AllWorkstreams(d)
 	if len(workstreams) == 0 {
 		return
 	}
 
-	claudePath := whichClaudeBinary()
+	claudePath := whichClaudeBinaryEnv(env)
 
 	for _, ws := range workstreams {
 		var activeSessions []db.ClaudeSessionInfo
@@ -30,43 +34,47 @@ func Reconcile(d *sql.DB) {
 			continue
 		}
 
-		if tmuxSessionExists(ws.TmuxID) {
+		if tmuxSessionExistsEnv(env, ws.TmuxID) {
 			continue
 		}
 
 		first := activeSessions[0]
-		cwd := FindSessionCWD(first.SessionID)
-		if cwd == "" || !ValidateCWD(cwd) {
+		cwd := FindSessionCWDFS(env.Fs, env.Home, first.SessionID)
+		if cwd == "" || !ValidateCWDFS(env.Fs, cwd) {
 			fmt.Fprintf(os.Stderr, "reconcile: skip %s: bad cwd %q\n", ws.TmuxID, cwd)
 			continue
 		}
 
-		cmd := exec.Command("tmux",
+		err := env.Cmd.Run("tmux",
 			"new-session", "-d", "-s", ws.TmuxID, "-c", cwd,
 			claudePath, "--resume", first.SessionID,
 		)
-		if err := cmd.Run(); err != nil {
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "reconcile: fail %s: %v\n", ws.TmuxID, err)
 			continue
 		}
-		exec.Command("tmux", "set-option", "-t", ws.TmuxID, "@display_name", ws.DisplayName).Run()
+		env.Cmd.Run("tmux", "set-option", "-t", ws.TmuxID, "@display_name", ws.DisplayName)
 		fmt.Fprintf(os.Stderr, "reconcile: restored %s\n", ws.TmuxID)
 
 		for _, cs := range activeSessions[1:] {
-			csCwd := FindSessionCWD(cs.SessionID)
-			if csCwd == "" || !ValidateCWD(csCwd) {
+			csCwd := FindSessionCWDFS(env.Fs, env.Home, cs.SessionID)
+			if csCwd == "" || !ValidateCWDFS(env.Fs, csCwd) {
 				csCwd = cwd
 			}
-			exec.Command("tmux",
+			env.Cmd.Run("tmux",
 				"new-window", "-t", ws.TmuxID, "-c", csCwd,
 				claudePath, "--resume", cs.SessionID,
-			).Run()
+			)
 		}
 	}
 }
 
 func whichClaudeBinary() string {
-	out, err := exec.Command("which", "claude").Output()
+	return whichClaudeBinaryEnv(RealEnv())
+}
+
+func whichClaudeBinaryEnv(env *Env) string {
+	out, err := env.Cmd.Output("which", "claude")
 	if err != nil {
 		return "claude"
 	}
@@ -79,4 +87,8 @@ func whichClaudeBinary() string {
 
 func tmuxSessionExists(name string) bool {
 	return exec.Command("tmux", "has-session", "-t", name).Run() == nil
+}
+
+func tmuxSessionExistsEnv(env *Env, name string) bool {
+	return env.Cmd.Run("tmux", "has-session", "-t", name) == nil
 }

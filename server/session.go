@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/afero"
 )
 
 const maxLineBytes = 10 * 1024 * 1024
@@ -189,6 +190,14 @@ func ValidateCWD(cwd string) bool {
 		return false
 	}
 	info, err := os.Stat(cwd)
+	return err == nil && info.IsDir()
+}
+
+func ValidateCWDFS(fs afero.Fs, cwd string) bool {
+	if !filepath.IsAbs(cwd) {
+		return false
+	}
+	info, err := fs.Stat(cwd)
 	return err == nil && info.IsDir()
 }
 
@@ -1734,6 +1743,34 @@ func FindSessionCWD(sessionID string) string {
 		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for i := 0; i < 20 && scanner.Scan(); i++ {
 			var v map[string]interface{}
+			if json.Unmarshal([]byte(scanner.Text()), &v) == nil {
+				if cwd, ok := v["cwd"].(string); ok {
+					f.Close()
+					return cwd
+				}
+			}
+		}
+		f.Close()
+	}
+	return ""
+}
+
+func FindSessionCWDFS(fs afero.Fs, home, sessionID string) string {
+	projectsDir := filepath.Join(home, ".claude", "projects")
+	entries, err := afero.ReadDir(fs, projectsDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		jsonlPath := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
+		f, err := fs.Open(jsonlPath)
+		if err != nil {
+			continue
+		}
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for i := 0; i < 20 && scanner.Scan(); i++ {
+			var v map[string]any
 			if json.Unmarshal([]byte(scanner.Text()), &v) == nil {
 				if cwd, ok := v["cwd"].(string); ok {
 					f.Close()

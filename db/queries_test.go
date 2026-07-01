@@ -350,6 +350,84 @@ func TestCreateWorkstreamDB_UniqueUUIDs(t *testing.T) {
 	}
 }
 
+func TestAddClaudeSession_NoDuplicates(t *testing.T) {
+	d := OpenTestDB()
+	defer d.Close()
+	now := time.Now()
+
+	CreateWorkstreamDB(d, "test", testClock(now))
+	AddClaudeSession(d, 1, "sess-1", testClock(now))
+	AddClaudeSession(d, 1, "sess-1", testClock(now))
+
+	ws := AllWorkstreams(d)
+	if len(ws[0].Sessions) != 1 {
+		t.Fatalf("duplicate session_id should be ignored, got %d sessions", len(ws[0].Sessions))
+	}
+}
+
+func TestDeleteWorkstream(t *testing.T) {
+	d := OpenTestDB()
+	defer d.Close()
+	now := time.Now()
+
+	CreateWorkstreamDB(d, "to-delete", testClock(now))
+	AddClaudeSession(d, 1, "sess-1", testClock(now))
+
+	ws := AllWorkstreams(d)
+	if len(ws) != 1 {
+		t.Fatal("should have 1 workstream")
+	}
+
+	DeleteWorkstream(d, ws[0].WorkstreamID, testClock(now))
+
+	ws = AllWorkstreams(d)
+	if len(ws) != 0 {
+		t.Fatalf("deleted workstream should not appear, got %d", len(ws))
+	}
+}
+
+func TestSetSessionActive(t *testing.T) {
+	d := OpenTestDB()
+	defer d.Close()
+	now := time.Now()
+
+	CreateWorkstreamDB(d, "test", testClock(now))
+	AddClaudeSession(d, 1, "sess-1", testClock(now))
+
+	ws := AllWorkstreams(d)
+	if !ws[0].Sessions[0].Active {
+		t.Fatal("new session should default to active")
+	}
+
+	SetSessionActive(d, "sess-1", false)
+	ws = AllWorkstreams(d)
+	if ws[0].Sessions[0].Active {
+		t.Fatal("should be inactive after SetSessionActive(false)")
+	}
+
+	SetSessionActive(d, "sess-1", true)
+	ws = AllWorkstreams(d)
+	if !ws[0].Sessions[0].Active {
+		t.Fatal("should be active after SetSessionActive(true)")
+	}
+}
+
+func TestSaveSummary(t *testing.T) {
+	d := OpenTestDB()
+	defer d.Close()
+	now := time.Now()
+
+	CreateWorkstreamDB(d, "test", testClock(now))
+	AddClaudeSession(d, 1, "sess-1", testClock(now))
+
+	SaveSummaryDB(d, "sess-1", "Fixed a bug")
+
+	summary := LoadSummaryDB(d, "sess-1")
+	if summary != "Fixed a bug" {
+		t.Fatalf("expected 'Fixed a bug', got '%s'", summary)
+	}
+}
+
 func TestGracePeriodBoundary(t *testing.T) {
 	d := OpenTestDB()
 	defer d.Close()
