@@ -10,10 +10,6 @@ import (
 	"grecon/db"
 )
 
-func Reconcile(d *sql.DB) {
-	reconcileWithEnv(RealEnv(), d)
-}
-
 func reconcileWithEnv(env *Env, d *sql.DB) {
 	workstreams := db.AllWorkstreams(d)
 	if len(workstreams) == 0 {

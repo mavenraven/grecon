@@ -80,7 +80,8 @@ func TestHandleCreateSession_InvalidCWD(t *testing.T) {
 	db.SetGlobal(d)
 	defer db.SetGlobal(nil)
 
-	resp := handleCreateSession(Command{
+	env, _ := testEnv(time.Now())
+	resp := handleCreateSession(env, Command{
 		Type: "create-session",
 		Name: "test",
 		CWD:  "relative/path",
@@ -98,7 +99,8 @@ func TestHandleCreateSession_NoDB(t *testing.T) {
 	db.SetGlobal(nil)
 	defer db.SetGlobal(old)
 
-	resp := handleCreateSession(Command{
+	env, _ := testEnv(time.Now())
+	resp := handleCreateSession(env, Command{
 		Type: "create-session",
 		Name: "test",
 		CWD:  "/tmp",
@@ -117,7 +119,8 @@ func TestHandleDeleteSession_NoSessionID(t *testing.T) {
 	db.SetGlobal(d)
 	defer db.SetGlobal(nil)
 
-	resp := handleDeleteSession(Command{Type: "delete-session"})
+	env, _ := testEnv(time.Now())
+	resp := handleDeleteSession(env, Command{Type: "delete-session"})
 	if resp.OK {
 		t.Fatal("should fail with no session_id")
 	}
@@ -135,7 +138,8 @@ func TestHandleDeleteSession_Success(t *testing.T) {
 	db.CreateWorkstreamDB(d, "test", time.Now)
 	db.AddClaudeSession(d, 1, "sess-1", time.Now)
 
-	resp := handleDeleteSession(Command{Type: "delete-session", SessionID: "sess-1"})
+	env, _ := testEnv(time.Now())
+	resp := handleDeleteSession(env, Command{Type: "delete-session", SessionID: "sess-1"})
 	if !resp.OK {
 		t.Fatalf("should succeed, got error: %s", resp.Error)
 	}
@@ -161,7 +165,9 @@ func TestHandleReactivateSession_BadCWD(t *testing.T) {
 	db.CreateWorkstreamDB(d, "test", time.Now)
 	db.AddClaudeSession(d, 1, "sess-nocwd", time.Now)
 
-	resp := handleReactivateSession(Command{
+	env, _ := testEnv(time.Now())
+	env.Fs.MkdirAll("/fakehome/.claude/projects", 0o755)
+	resp := handleReactivateSession(env, Command{
 		Type:        "reactivate-session",
 		SessionID:   "sess-nocwd",
 		TmuxSession: "nonexistent-tmux-uuid",

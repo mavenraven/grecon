@@ -1,13 +1,53 @@
 package client
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/spf13/afero"
 
+	"grecon/db"
 	"grecon/server"
 )
+
+type testCmd struct {
+	mu      sync.Mutex
+	outputs map[string][]byte
+}
+
+func newTestCmd() *testCmd {
+	return &testCmd{outputs: make(map[string][]byte)}
+}
+
+func (t *testCmd) SetOutput(key string, data []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.outputs[key] = data
+}
+
+func (t *testCmd) Run(name string, args ...string) error { return nil }
+func (t *testCmd) Output(name string, args ...string) ([]byte, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	key := name
+	for _, a := range args {
+		key += " " + a
+	}
+	if out, ok := t.outputs[key]; ok {
+		return out, nil
+	}
+	return nil, nil
+}
+func (t *testCmd) RunWithStdin(stdin string, name string, args ...string) (string, error) {
+	return "", nil
+}
 
 func newTestTUI(sessions []*server.Session) tuiModel {
 	app := NewApp()
@@ -397,6 +437,208 @@ func TestIntegration_FooterShowsNewKey(t *testing.T) {
 
 	if !strings.Contains(view, "new") {
 		t.Fatal("footer should show 'n new' keybinding")
+	}
+}
+
+func TestIntegration_NoGhostAfterTmuxKillAndReactivate(t *testing.T) {
+	instance := fmt.Sprintf("integration-test-%d", time.Now().UnixNano())
+	db.SetInstance(instance)
+	defer func() {
+		db.SetInstance("grecon")
+		os.Remove(db.Path())
+		os.Remove(server.SocketPath())
+		os.Remove(server.CommandSocketPath())
+	}()
+
+	home, _ := os.UserHomeDir()
+	cmd := newTestCmd()
+	env := &server.Env{
+		Fs:    afero.NewOsFs(),
+		Cmd:   cmd,
+		Clock: time.Now,
+		Home:  home,
+	}
+
+	// Create JSONL backing files for sessions we'll create
+	jsonlDir := filepath.Join(home, ".claude", "projects", "-test-integration-ghost")
+	os.MkdirAll(jsonlDir, 0o755)
+	defer os.RemoveAll(jsonlDir)
+
+	for _, sid := range []string{"sess-A", "sess-B", "sess-C"} {
+		os.WriteFile(filepath.Join(jsonlDir, sid+".jsonl"), []byte(`{"type":"user","cwd":"/tmp"}`+"\n"), 0o644)
+	}
+
+	// Create session files so DiscoverSessions can match PIDs to session IDs
+	sessDir := filepath.Join(home, ".claude", "sessions")
+	os.MkdirAll(sessDir, 0o755)
+	for i, sid := range []string{"sess-A", "sess-B", "sess-C"} {
+		pid := 90001 + i
+		data, _ := json.Marshal(map[string]any{
+			"pid": pid, "sessionId": sid, "cwd": "/tmp", "startedAt": time.Now().UnixMilli(),
+		})
+		os.WriteFile(filepath.Join(sessDir, fmt.Sprintf("%d.json", pid)), data, 0o644)
+		defer os.Remove(filepath.Join(sessDir, fmt.Sprintf("%d.json", pid)))
+	}
+
+	// Start server — no tmux panes yet, so no sessions discovered
+	go server.RunServer(env)
+	time.Sleep(200 * time.Millisecond)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	ch := server.Subscribe(stop)
+
+	// Step 1: Create sessions through the command socket
+	for _, name := range []string{"grecon-improvements", "coach-queue-stuck", "policy-bot-issue"} {
+		resp, err := server.SendCommand(server.Command{
+			Type: "create-session",
+			Name: name,
+			CWD:  "/tmp",
+		})
+		if err != nil {
+			t.Fatalf("failed to create session %s: %v", name, err)
+		}
+		if !resp.OK {
+			t.Fatalf("create session %s failed: %s", name, resp.Error)
+		}
+	}
+
+	// Find the tmux IDs from the DB for each workstream
+	d := db.Get()
+	workstreams := db.AllWorkstreams(d)
+	tmuxIDs := make(map[string]string)
+	for _, ws := range workstreams {
+		tmuxIDs[ws.DisplayName] = ws.TmuxID
+	}
+
+	// Step 2: Make fake tmux return pane data showing all 3 sessions as live
+	var paneLines string
+	for i, sid := range []string{"sess-A", "sess-B", "sess-C"} {
+		pid := 90001 + i
+		names := []string{"grecon-improvements", "coach-queue-stuck", "policy-bot-issue"}
+		tmuxID := tmuxIDs[names[i]]
+		paneLines += fmt.Sprintf("%d|||%s|||claude|||/tmp|||0|||0\n", pid, tmuxID)
+		_ = sid
+	}
+	cmd.SetOutput("tmux list-panes -a -F #{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}", []byte(paneLines))
+	cmd.SetOutput("ps -eo pid,ppid,args", []byte("  PID  PPID ARGS\n90001     1 claude\n90002     1 claude\n90003     1 claude\n"))
+
+	// Wait for all 3 sessions to appear as active
+	var sessions []*server.Session
+	for i := 0; i < 20; i++ {
+		select {
+		case sessions = <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for active sessions")
+		}
+		if len(sessions) >= 3 {
+			activeCount := 0
+			for _, s := range sessions {
+				if s.Status != server.StatusInactive && s.Status != server.StatusDeleted {
+					activeCount++
+				}
+			}
+			if activeCount >= 3 {
+				break
+			}
+		}
+	}
+
+	m := newTestTUI(sessions)
+	view := m.View()
+	if strings.Contains(view, "Off") {
+		t.Fatal("no sessions should show as Off when tmux is alive")
+	}
+
+	// Step 3: Kill tmux — fake returns empty
+	cmd.SetOutput("tmux list-panes -a -F #{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}", []byte(""))
+	cmd.SetOutput("ps -eo pid,ppid,args", []byte("  PID  PPID ARGS\n"))
+
+	// Wait for all sessions to go inactive
+	for i := 0; i < 20; i++ {
+		select {
+		case sessions = <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for sessions to go Off")
+		}
+		allOff := true
+		for _, s := range sessions {
+			if s.Status != server.StatusInactive && s.Status != server.StatusDeleted {
+				allOff = false
+			}
+		}
+		if allOff && len(sessions) >= 3 {
+			break
+		}
+	}
+
+	m = newTestTUI(sessions)
+	view = m.View()
+	if !strings.Contains(view, "Off") {
+		t.Fatal("all sessions should show as Off after tmux kill")
+	}
+
+	// Step 4: Reactivate sess-B through the command socket
+	coachTmuxID := tmuxIDs["coach-queue-stuck"]
+	resp, err := server.SendCommand(server.Command{
+		Type:        "reactivate-session",
+		SessionID:   "sess-B",
+		TmuxSession: coachTmuxID,
+	})
+	if err != nil {
+		t.Fatalf("reactivate failed: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("reactivate failed: %s", resp.Error)
+	}
+
+	// Step 5: Simulate Claude starting with a NEW session ID after --resume
+	newSessFile := filepath.Join(sessDir, "99999.json")
+	newSessData, _ := json.Marshal(map[string]any{
+		"pid": 99999, "sessionId": "sess-B-new", "cwd": "/tmp", "startedAt": time.Now().UnixMilli(),
+	})
+	os.WriteFile(newSessFile, newSessData, 0o644)
+	defer os.Remove(newSessFile)
+	os.WriteFile(filepath.Join(jsonlDir, "sess-B-new.jsonl"), []byte(`{"type":"user","cwd":"/tmp"}`+"\n"), 0o644)
+
+	// Fake tmux now shows only the new session running
+	cmd.SetOutput("tmux list-panes -a -F #{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}",
+		[]byte(fmt.Sprintf("99999|||%s|||claude|||/tmp|||0|||0\n", coachTmuxID)))
+	cmd.SetOutput("ps -eo pid,ppid,args", []byte("  PID  PPID ARGS\n99999     1 claude --resume sess-B\n"))
+
+	// Wait for server to discover sess-B-new
+	var found bool
+	for i := 0; i < 20; i++ {
+		select {
+		case sessions = <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for new session discovery")
+		}
+		for _, s := range sessions {
+			if s.SessionID == "sess-B-new" {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatal("server should have discovered sess-B-new")
+	}
+
+	// Assert: coach-queue-stuck should have exactly 1 session, not 2
+	coachCount := 0
+	for _, s := range sessions {
+		if s.TmuxSession == coachTmuxID {
+			coachCount++
+		}
+	}
+	if coachCount > 1 {
+		m = newTestTUI(sessions)
+		view = m.View()
+		t.Fatalf("should have 1 session under coach-queue-stuck after reactivation, got %d (ghost entry exists)\nview:\n%s", coachCount, view)
 	}
 }
 

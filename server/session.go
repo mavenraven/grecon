@@ -882,11 +882,9 @@ func stripANSI(s string) string {
 
 // --- Session discovery ---
 
-func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
+func DiscoverSessions(env *Env, prevSessions map[string]*Session) []*Session {
+	fs := env.Fs
+	home := env.Home
 	claudeDir := filepath.Join(home, ".claude", "projects")
 	if _, err := fs.Stat(claudeDir); err != nil {
 		return nil
@@ -900,19 +898,19 @@ func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session 
 	wgA.Add(3)
 	go func() {
 		defer wgA.Done()
-		out, err := exec.Command("tmux", "list-panes", "-a", "-F",
-			"#{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}").Output()
+		out, err := env.Cmd.Output("tmux", "list-panes", "-a", "-F",
+			"#{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}")
 		if err == nil {
 			paneLines = string(out)
 		}
 	}()
 	go func() {
 		defer wgA.Done()
-		pidSessionMap = readPIDSessionMap()
+		pidSessionMap = readPIDSessionMapFS(env.Fs, env.Home)
 	}()
 	go func() {
 		defer wgA.Done()
-		pt = buildProcessTree()
+		pt = buildProcessTreeCmd(env.Cmd)
 	}()
 	wgA.Wait()
 
@@ -931,11 +929,11 @@ func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session 
 	wgB.Add(2)
 	go func() {
 		defer wgB.Done()
-		paneContents = capturePanesByTarget(claudeTargets)
+		paneContents = capturePanesByTargetCmd(env.Cmd, claudeTargets)
 	}()
 	go func() {
 		defer wgB.Done()
-		tmuxEnv = readEnvForSessions(sessionNames)
+		tmuxEnv = readEnvForSessionsCmd(env.Cmd, sessionNames)
 	}()
 	wgB.Wait()
 
@@ -1205,8 +1203,12 @@ func readPIDSessionMap() map[int]sessionFileInfo {
 	if err != nil {
 		return nil
 	}
+	return readPIDSessionMapFS(afero.NewOsFs(), home)
+}
+
+func readPIDSessionMapFS(fs afero.Fs, home string) map[int]sessionFileInfo {
 	dir := filepath.Join(home, ".claude", "sessions")
-	entries, err := os.ReadDir(dir)
+	entries, err := afero.ReadDir(fs, dir)
 	if err != nil {
 		return nil
 	}
@@ -1215,7 +1217,7 @@ func readPIDSessionMap() map[int]sessionFileInfo {
 		if filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		data, err := afero.ReadFile(fs, filepath.Join(dir, entry.Name()))
 		if err != nil {
 			continue
 		}
@@ -1243,7 +1245,11 @@ type processTree struct {
 }
 
 func buildProcessTree() *processTree {
-	out, err := exec.Command("ps", "-eo", "pid,ppid,args").Output()
+	return buildProcessTreeCmd(&realCmd{})
+}
+
+func buildProcessTreeCmd(cmd CommandRunner) *processTree {
+	out, err := cmd.Output("ps", "-eo", "pid,ppid,args")
 	if err != nil {
 		return &processTree{children: nil, args: nil}
 	}
@@ -1468,6 +1474,10 @@ func buildLiveMapFromPanes(claudePanes [][4]string, pidSessionMap map[int]sessio
 }
 
 func capturePanesByTarget(targets []string) map[string]string {
+	return capturePanesByTargetCmd(&realCmd{}, targets)
+}
+
+func capturePanesByTargetCmd(cmd CommandRunner, targets []string) map[string]string {
 	type result struct {
 		target  string
 		content string
@@ -1478,7 +1488,7 @@ func capturePanesByTarget(targets []string) map[string]string {
 		wg.Add(1)
 		go func(target string) {
 			defer wg.Done()
-			out, err := exec.Command("tmux", "capture-pane", "-t", target, "-p").Output()
+			out, err := cmd.Output("tmux", "capture-pane", "-t", target, "-p")
 			if err == nil {
 				ch <- result{target, string(out)}
 			}
@@ -1495,6 +1505,10 @@ func capturePanesByTarget(targets []string) map[string]string {
 }
 
 func readEnvForSessions(sessionNames []string) map[string]map[string]string {
+	return readEnvForSessionsCmd(&realCmd{}, sessionNames)
+}
+
+func readEnvForSessionsCmd(cmd CommandRunner, sessionNames []string) map[string]map[string]string {
 	type result struct {
 		name string
 		vars map[string]string
@@ -1505,7 +1519,7 @@ func readEnvForSessions(sessionNames []string) map[string]map[string]string {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
-			out, err := exec.Command("tmux", "show-environment", "-t", n).Output()
+			out, err := cmd.Output("tmux", "show-environment", "-t", n)
 			if err != nil {
 				return
 			}

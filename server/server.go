@@ -77,8 +77,13 @@ func releaseLock() {
 	os.Remove(lockPath())
 }
 
-func RunServer() {
-	env := RealEnv()
+func RunServer(envs ...*Env) {
+	var env *Env
+	if len(envs) > 0 && envs[0] != nil {
+		env = envs[0]
+	} else {
+		env = RealEnv()
+	}
 	runServer(env)
 }
 
@@ -101,7 +106,7 @@ func runServer(env *Env) {
 	}
 	defer d.Close()
 
-	Reconcile(d)
+	reconcileWithEnv(env, d)
 
 	path := SocketPath()
 	os.MkdirAll(filepath.Dir(path), 0o755)
@@ -130,7 +135,7 @@ func runServer(env *Env) {
 
 	fmt.Fprintf(os.Stderr, "grecon server listening on %s\n", path)
 
-	go listenCommands()
+	go listenCommands(env)
 
 	broadcast := func(sessions []*Session) {
 		for _, s := range sessions {
@@ -479,7 +484,7 @@ func discoverTmuxSessions(env *Env, prev map[string]*Session) []*Session {
 		}
 	}
 
-	all := DiscoverSessions(env.Fs, prev)
+	all := DiscoverSessions(env, prev)
 	var sessions []*Session
 	for _, s := range all {
 		if s.TmuxSession != "" && knownTmux[s.TmuxSession] {

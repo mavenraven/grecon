@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -82,7 +81,7 @@ func SendCommand(cmd Command) (*CommandResponse, error) {
 	return &resp, nil
 }
 
-func listenCommands() {
+func listenCommands(env *Env) {
 	path := CommandSocketPath()
 	os.Remove(path)
 
@@ -98,11 +97,11 @@ func listenCommands() {
 		if err != nil {
 			continue
 		}
-		go handleCommand(conn)
+		go handleCommand(conn, env)
 	}
 }
 
-func handleCommand(conn net.Conn) {
+func handleCommand(conn net.Conn, env *Env) {
 	defer conn.Close()
 
 	conn.SetReadDeadline(time.Now().Add(time.Second))
@@ -130,11 +129,11 @@ func handleCommand(conn net.Conn) {
 		go fixDefaultPath(cmd.TmuxSession)
 		resp = CommandResponse{OK: true}
 	case "create-session":
-		resp = handleCreateSession(cmd)
+		resp = handleCreateSession(env, cmd)
 	case "reactivate-session":
-		resp = handleReactivateSession(cmd)
+		resp = handleReactivateSession(env, cmd)
 	case "delete-session":
-		resp = handleDeleteSession(cmd)
+		resp = handleDeleteSession(env, cmd)
 	default:
 		resp = CommandResponse{OK: false, Error: "unknown command"}
 	}
@@ -154,7 +153,7 @@ func sendResponse(conn net.Conn, resp CommandResponse) {
 	conn.Write(buf)
 }
 
-func handleCreateSession(cmd Command) CommandResponse {
+func handleCreateSession(env *Env, cmd Command) CommandResponse {
 	d := db.Get()
 	if d == nil {
 		return CommandResponse{OK: false, Error: "no database"}
@@ -166,7 +165,7 @@ func handleCreateSession(cmd Command) CommandResponse {
 
 	displayName := sanitizeSessionName(cmd.Name)
 
-	tmuxID, err := db.CreateWorkstreamDB(d, displayName, time.Now)
+	tmuxID, err := db.CreateWorkstreamDB(d, displayName, env.Clock)
 	if err != nil {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("create workstream: %v", err)}
 	}
@@ -191,12 +190,11 @@ func handleCreateSession(cmd Command) CommandResponse {
 		}
 	}
 
-	tmuxCmd := exec.Command("tmux", args...)
-	if err := tmuxCmd.Run(); err != nil {
+	if err := env.Cmd.Run("tmux", args...); err != nil {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("tmux: %v", err)}
 	}
 
-	exec.Command("tmux", "set-option", "-t", tmuxID, "@display_name", displayName).Run()
+	env.Cmd.Run("tmux", "set-option", "-t", tmuxID, "@display_name", displayName)
 	if cmd.Worktree {
 		go fixDefaultPath(tmuxID)
 	}
@@ -204,45 +202,47 @@ func handleCreateSession(cmd Command) CommandResponse {
 	return CommandResponse{OK: true, TmuxSession: tmuxID}
 }
 
-func handleReactivateSession(cmd Command) CommandResponse {
+func handleReactivateSession(env *Env, cmd Command) CommandResponse {
 	d := db.Get()
 	if d == nil {
 		return CommandResponse{OK: false, Error: "no database"}
 	}
 
-	if !jsonlExistsForSession(cmd.SessionID) {
+	if !jsonlExistsForSessionFS(env.Fs, env.Home, cmd.SessionID) {
 		return CommandResponse{OK: false, Error: "session no longer exists"}
 	}
 
 	db.SetSessionActive(d, cmd.SessionID, true)
 
 	tmuxSession := cmd.TmuxSession
-	if !tmuxSessionExists(tmuxSession) {
+	out, _ := env.Cmd.Output("tmux", "has-session", "-t", tmuxSession)
+	sessionExists := out != nil
+	if !sessionExists {
 		cwd := FindSessionCWD(cmd.SessionID)
 		if cwd == "" || !ValidateCWD(cwd) {
 			return CommandResponse{OK: false, Error: "bad cwd"}
 		}
 		claudePath := whichClaudeBinary()
-		exec.Command("tmux",
+		env.Cmd.Run("tmux",
 			"new-session", "-d", "-s", tmuxSession, "-c", cwd,
 			claudePath, "--resume", cmd.SessionID,
-		).Run()
+		)
 	} else {
 		cwd := FindSessionCWD(cmd.SessionID)
 		if cwd == "" {
 			cwd = "."
 		}
 		claudePath := whichClaudeBinary()
-		exec.Command("tmux",
+		env.Cmd.Run("tmux",
 			"new-window", "-t", tmuxSession, "-c", cwd,
 			claudePath, "--resume", cmd.SessionID,
-		).Run()
+		)
 	}
 
 	return CommandResponse{OK: true, TmuxSession: tmuxSession}
 }
 
-func handleDeleteSession(cmd Command) CommandResponse {
+func handleDeleteSession(env *Env, cmd Command) CommandResponse {
 	d := db.Get()
 	if d == nil {
 		return CommandResponse{OK: false, Error: "no database"}
@@ -250,7 +250,7 @@ func handleDeleteSession(cmd Command) CommandResponse {
 	if cmd.SessionID == "" {
 		return CommandResponse{OK: false, Error: "no session_id"}
 	}
-	db.SoftDeleteSession(d, cmd.SessionID, time.Now)
+	db.SoftDeleteSession(d, cmd.SessionID, env.Clock)
 	return CommandResponse{OK: true}
 }
 
