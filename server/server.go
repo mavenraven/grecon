@@ -99,12 +99,7 @@ func runServer(env *Env) {
 		os.Exit(0)
 	}()
 
-	d, err := db.Open()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
-		os.Exit(1)
-	}
-	defer d.Close()
+	d := env.DB
 
 	reconcileWithEnv(env, d)
 
@@ -194,7 +189,7 @@ func runServer(env *Env) {
 					prev[s.SessionID] = s
 				}
 
-				AttachSummaries(sessions)
+				AttachSummaries(env, sessions)
 				syncPaneWatcher(pw, sessions)
 
 				fmt.Printf("poll #%d: discover=%dms sessions=%d\n",
@@ -476,7 +471,7 @@ func homeDir() string {
 }
 
 func discoverTmuxSessions(env *Env, prev map[string]*Session) []*Session {
-	d := db.Get()
+	d := env.DB
 	knownTmux := make(map[string]bool)
 	if d != nil {
 		for _, ws := range db.AllWorkstreams(d) {

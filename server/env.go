@@ -2,11 +2,15 @@ package server
 
 import (
 	"bytes"
+	"database/sql"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"time"
+
+	"grecon/db"
 
 	"github.com/spf13/afero"
 )
@@ -22,15 +26,22 @@ type Env struct {
 	Cmd   CommandRunner
 	Clock func() time.Time
 	Home  string
+	DB    *sql.DB
 }
 
 func RealEnv() *Env {
 	home, _ := os.UserHomeDir()
+	d, err := db.Open()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open database: %v\n", err)
+		os.Exit(1)
+	}
 	return &Env{
 		Fs:    afero.NewOsFs(),
 		Cmd:   &realCmd{},
 		Clock: time.Now,
 		Home:  home,
+		DB:    d,
 	}
 }
 

@@ -443,15 +443,16 @@ func TestIntegration_FooterShowsNewKey(t *testing.T) {
 func TestIntegration_NoGhostAfterTmuxKillAndReactivate(t *testing.T) {
 	instance := fmt.Sprintf("integration-test-%d", time.Now().UnixNano())
 	db.SetInstance(instance)
-	testDBPath := db.Path()
 	testSocketPath := server.SocketPath()
 	testCmdSocketPath := server.CommandSocketPath()
 	defer func() {
-		os.Remove(testDBPath)
 		os.Remove(testSocketPath)
 		os.Remove(testCmdSocketPath)
 		db.SetInstance("grecon")
 	}()
+
+	d := db.OpenTestDB()
+	defer d.Close()
 
 	home, _ := os.UserHomeDir()
 	cmd := newTestCmd()
@@ -460,6 +461,7 @@ func TestIntegration_NoGhostAfterTmuxKillAndReactivate(t *testing.T) {
 		Cmd:   cmd,
 		Clock: time.Now,
 		Home:  home,
+		DB:    d,
 	}
 
 	// Create JSONL backing files for sessions we'll create
@@ -507,7 +509,6 @@ func TestIntegration_NoGhostAfterTmuxKillAndReactivate(t *testing.T) {
 	}
 
 	// Find the tmux IDs from the DB for each workstream
-	d := db.Get()
 	workstreams := db.AllWorkstreams(d)
 	tmuxIDs := make(map[string]string)
 	for _, ws := range workstreams {

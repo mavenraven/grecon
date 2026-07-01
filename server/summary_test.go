@@ -280,7 +280,7 @@ func TestGenerateSummary_PassesCorrectArgs(t *testing.T) {
 	globalSummary.pending["test-key"] = true
 	globalSummary.mu.Unlock()
 
-	generateSummaryWith(cmd, "test-key", "Some activity text")
+	generateSummaryWith(cmd, nil,"test-key", "Some activity text")
 
 	if len(cmd.StdinCalls) != 1 {
 		t.Fatalf("expected 1 stdin call, got %d", len(cmd.StdinCalls))
@@ -313,7 +313,7 @@ func TestGenerateSummary_EmptyOutputSkipsSave(t *testing.T) {
 	globalSummary.pending["empty-key"] = true
 	globalSummary.mu.Unlock()
 
-	generateSummaryWith(cmd, "empty-key", "Some activity")
+	generateSummaryWith(cmd, nil,"empty-key", "Some activity")
 	// Should not panic or save anything — no way to assert DB save without
 	// wiring DB, but at least verify it doesn't crash
 }
@@ -328,7 +328,7 @@ func TestGenerateSummary_ErrorDoesNotSave(t *testing.T) {
 	globalSummary.pending["err-key"] = true
 	globalSummary.mu.Unlock()
 
-	generateSummaryWith(cmd, "err-key", "Some activity")
+	generateSummaryWith(cmd, nil,"err-key", "Some activity")
 	// Should not panic
 }
 
@@ -342,7 +342,7 @@ func TestGenerateSummary_StripsURLsFromPrompt(t *testing.T) {
 	globalSummary.pending["url-key"] = true
 	globalSummary.mu.Unlock()
 
-	generateSummaryWith(cmd, "url-key", "Visited https://example.com/page and did stuff")
+	generateSummaryWith(cmd, nil,"url-key", "Visited https://example.com/page and did stuff")
 
 	if len(cmd.StdinCalls) != 1 {
 		t.Fatal("expected 1 call")
@@ -365,7 +365,7 @@ func TestGenerateSummary_ClearsPendingFlag(t *testing.T) {
 	globalSummary.pending["pending-key"] = true
 	globalSummary.mu.Unlock()
 
-	generateSummaryWith(cmd, "pending-key", "activity")
+	generateSummaryWith(cmd, nil,"pending-key", "activity")
 
 	globalSummary.mu.Lock()
 	isPending := globalSummary.pending["pending-key"]

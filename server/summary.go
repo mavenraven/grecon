@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -28,14 +29,14 @@ var globalSummary = &summaryState{
 	pending: make(map[string]bool),
 }
 
-func AttachSummaries(sessions []*Session) {
-	d := db.Get()
+func AttachSummaries(env *Env, sessions []*Session) {
+	d := env.DB
 	for _, s := range sessions {
 		if d != nil && s.SessionID != "" {
 			s.Summary = db.LoadSummaryDB(d, s.SessionID)
 		}
 		if s.JSONLPath != "" {
-			maybeRegenerateSummary(s.SessionID, s.JSONLPath)
+			maybeRegenerateSummary(env, s.SessionID, s.JSONLPath)
 		}
 
 		for _, sa := range s.Subagents {
@@ -43,13 +44,13 @@ func AttachSummaries(sessions []*Session) {
 				sa.Summary = db.LoadSummaryDB(d, "sa:"+sa.AgentID)
 			}
 			if sa.JSONLPath != "" {
-				maybeRegenerateSummary("sa:"+sa.AgentID, sa.JSONLPath)
+				maybeRegenerateSummary(env, "sa:"+sa.AgentID, sa.JSONLPath)
 			}
 		}
 	}
 }
 
-func maybeRegenerateSummary(key, jsonlPath string) {
+func maybeRegenerateSummary(env *Env, key, jsonlPath string) {
 	activity := extractRecentActivity(jsonlPath)
 	hash := hashEntry(activity)
 
@@ -61,7 +62,7 @@ func maybeRegenerateSummary(key, jsonlPath string) {
 		globalSummary.hashes[key] = hash
 		globalSummary.pending[key] = true
 		globalSummary.mu.Unlock()
-		go generateSummary(key, activity)
+		go generateSummaryWith(env.Cmd, env.DB, key, activity)
 	} else {
 		globalSummary.mu.Unlock()
 	}
@@ -234,11 +235,7 @@ func hashEntry(s string) string {
 	return hex.EncodeToString(h[:8])
 }
 
-func generateSummary(key, text string) {
-	generateSummaryWith(RealEnv().Cmd, key, text)
-}
-
-func generateSummaryWith(cmd CommandRunner, key, text string) {
+func generateSummaryWith(cmd CommandRunner, d *sql.DB, key, text string) {
 	defer func() {
 		globalSummary.mu.Lock()
 		globalSummary.pending[key] = false
@@ -261,7 +258,6 @@ func generateSummaryWith(cmd CommandRunner, key, text string) {
 		return
 	}
 
-	d := db.Get()
 	if d != nil {
 		db.SaveSummaryDB(d, key, summary)
 	}

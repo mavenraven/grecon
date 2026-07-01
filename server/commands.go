@@ -154,7 +154,7 @@ func sendResponse(conn net.Conn, resp CommandResponse) {
 }
 
 func handleCreateSession(env *Env, cmd Command) CommandResponse {
-	d := db.Get()
+	d := env.DB
 	if d == nil {
 		return CommandResponse{OK: false, Error: "no database"}
 	}
@@ -203,7 +203,7 @@ func handleCreateSession(env *Env, cmd Command) CommandResponse {
 }
 
 func handleReactivateSession(env *Env, cmd Command) CommandResponse {
-	d := db.Get()
+	d := env.DB
 	if d == nil {
 		return CommandResponse{OK: false, Error: "no database"}
 	}
@@ -243,7 +243,7 @@ func handleReactivateSession(env *Env, cmd Command) CommandResponse {
 }
 
 func handleDeleteSession(env *Env, cmd Command) CommandResponse {
-	d := db.Get()
+	d := env.DB
 	if d == nil {
 		return CommandResponse{OK: false, Error: "no database"}
 	}

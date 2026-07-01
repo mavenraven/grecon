@@ -77,10 +77,9 @@ func TestFixDefaultPath_GivesUpAfter30Tries(t *testing.T) {
 func TestHandleCreateSession_InvalidCWD(t *testing.T) {
 	d := db.OpenTestDB()
 	defer d.Close()
-	db.SetGlobal(d)
-	defer db.SetGlobal(nil)
 
 	env, _ := testEnv(time.Now())
+	env.DB = d
 	resp := handleCreateSession(env, Command{
 		Type: "create-session",
 		Name: "test",
@@ -95,10 +94,6 @@ func TestHandleCreateSession_InvalidCWD(t *testing.T) {
 }
 
 func TestHandleCreateSession_NoDB(t *testing.T) {
-	old := db.Get()
-	db.SetGlobal(nil)
-	defer db.SetGlobal(old)
-
 	env, _ := testEnv(time.Now())
 	resp := handleCreateSession(env, Command{
 		Type: "create-session",
@@ -116,10 +111,9 @@ func TestHandleCreateSession_NoDB(t *testing.T) {
 func TestHandleDeleteSession_NoSessionID(t *testing.T) {
 	d := db.OpenTestDB()
 	defer d.Close()
-	db.SetGlobal(d)
-	defer db.SetGlobal(nil)
 
 	env, _ := testEnv(time.Now())
+	env.DB = d
 	resp := handleDeleteSession(env, Command{Type: "delete-session"})
 	if resp.OK {
 		t.Fatal("should fail with no session_id")
@@ -132,13 +126,12 @@ func TestHandleDeleteSession_NoSessionID(t *testing.T) {
 func TestHandleDeleteSession_Success(t *testing.T) {
 	d := db.OpenTestDB()
 	defer d.Close()
-	db.SetGlobal(d)
-	defer db.SetGlobal(nil)
 
 	db.CreateWorkstreamDB(d, "test", time.Now)
 	db.AddClaudeSession(d, 1, "sess-1", time.Now)
 
 	env, _ := testEnv(time.Now())
+	env.DB = d
 	resp := handleDeleteSession(env, Command{Type: "delete-session", SessionID: "sess-1"})
 	if !resp.OK {
 		t.Fatalf("should succeed, got error: %s", resp.Error)
@@ -159,13 +152,12 @@ func TestHandleDeleteSession_Success(t *testing.T) {
 func TestHandleReactivateSession_BadCWD(t *testing.T) {
 	d := db.OpenTestDB()
 	defer d.Close()
-	db.SetGlobal(d)
-	defer db.SetGlobal(nil)
 
 	db.CreateWorkstreamDB(d, "test", time.Now)
 	db.AddClaudeSession(d, 1, "sess-nocwd", time.Now)
 
 	env, _ := testEnv(time.Now())
+	env.DB = d
 	env.Fs.MkdirAll("/fakehome/.claude/projects", 0o755)
 	resp := handleReactivateSession(env, Command{
 		Type:        "reactivate-session",
