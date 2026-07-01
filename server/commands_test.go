@@ -152,6 +152,29 @@ func TestHandleDeleteSession_Success(t *testing.T) {
 	}
 }
 
+func TestHandleReactivateSession_BadCWD(t *testing.T) {
+	d := db.OpenTestDB()
+	defer d.Close()
+	db.SetGlobal(d)
+	defer db.SetGlobal(nil)
+
+	db.CreateWorkstreamDB(d, "test", time.Now)
+	db.AddClaudeSession(d, 1, "sess-nocwd", time.Now)
+
+	resp := handleReactivateSession(Command{
+		Type:        "reactivate-session",
+		SessionID:   "sess-nocwd",
+		TmuxSession: "nonexistent-tmux-uuid",
+	})
+
+	if resp.OK {
+		t.Fatal("should fail with bad cwd when JSONL doesn't exist")
+	}
+	if resp.Error != "bad cwd" {
+		t.Fatalf("expected 'bad cwd', got '%s'", resp.Error)
+	}
+}
+
 type countingCmd struct {
 	fakeCmd
 	outputCount *int
