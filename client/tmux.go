@@ -56,15 +56,19 @@ func CreateSession(name, cwd, claudeName string, command *string, tags []string,
 	return resp.TmuxSession, nil
 }
 
-func ReactivateSession(sessionID, tmuxSession string) {
+func ReactivateSession(sessionID, tmuxSession string) error {
 	resp, err := server.SendCommand(server.Command{
 		Type:        "reactivate-session",
 		SessionID:   sessionID,
 		TmuxSession: tmuxSession,
 	})
-	if err != nil || !resp.OK {
-		return
+	if err != nil {
+		return fmt.Errorf("reactivate: %w", err)
 	}
+	if !resp.OK {
+		return fmt.Errorf("reactivate: %s", resp.Error)
+	}
+	return nil
 }
 
 func DefaultNewSessionInfo() (string, string) {

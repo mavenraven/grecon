@@ -130,6 +130,9 @@ func (m tuiModel) View() string {
 	if showSearch {
 		tableContentHeight--
 	}
+	if m.app.Error != "" {
+		tableContentHeight--
+	}
 	if tableContentHeight < 2 {
 		tableContentHeight = 2
 	}
@@ -496,6 +499,11 @@ func renderSearchBar(b *strings.Builder, app *App, width int) {
 }
 
 func renderFooter(b *strings.Builder, app *App, width int) {
+	if app.Error != "" {
+		errStyle := lipgloss.NewStyle().Foreground(colorRed)
+		b.WriteString(fitToWidth(errStyle.Render("Error: "+app.Error), width))
+		b.WriteString("\n")
+	}
 	var line string
 	if app.FilterActive {
 		line = cyanStyle.Render("Esc") + " clear  " +

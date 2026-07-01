@@ -43,6 +43,7 @@ type App struct {
 	FilterActive bool
 	FilterText   string
 	FilterCursor int
+	Error        string
 
 	mu       sync.Mutex
 	latest   []*server.Session
@@ -329,12 +330,17 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 	case "enter":
 		if s := a.SelectedSession(); s != nil {
 			if s.Status == server.StatusInactive {
-				ReactivateSession(s.SessionID, s.TmuxSession)
-				a.SwitchTarget = s.TmuxSession
-				a.ShouldQuit = true
+				if err := ReactivateSession(s.SessionID, s.TmuxSession); err != nil {
+					a.Error = err.Error()
+				} else {
+					a.SwitchTarget = s.TmuxSession
+					a.ShouldQuit = true
+				}
 			} else if s.PaneTarget != "" {
 				a.SwitchTarget = s.PaneTarget
 				a.ShouldQuit = true
+			} else {
+				a.Error = fmt.Sprintf("no pane target for session %s", s.TmuxSession)
 			}
 		}
 	case "x":
