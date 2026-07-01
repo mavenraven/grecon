@@ -20,6 +20,8 @@ import (
 	"os/exec"
 
 	"grecon/db"
+
+	"github.com/spf13/afero"
 )
 
 func SocketPath() string {
@@ -78,6 +80,11 @@ func releaseLock() {
 }
 
 func RunServer() {
+	env := RealEnv()
+	runServer(env)
+}
+
+func runServer(env *Env) {
 	acquireLock()
 	defer releaseLock()
 
@@ -103,7 +110,7 @@ func RunServer() {
 	os.Remove(path)
 
 	prev := make(map[string]*Session)
-	initial := seedFromDB(d)
+	initial := seedFromDB(env, d)
 	for _, s := range initial {
 		prev[s.SessionID] = s
 	}
@@ -176,7 +183,7 @@ func RunServer() {
 				sessions = discoverTmuxSessions(prev)
 				pollMs := time.Since(pollStart).Milliseconds()
 
-				sessions = reconcileDBWithLive(d, sessions)
+				sessions = reconcileDBWithLive(env, d, sessions)
 				cleanupSoftDeleted(d, sessions)
 
 				prev = make(map[string]*Session)
@@ -199,7 +206,7 @@ func RunServer() {
 							liveTmux[s.TmuxSession] = true
 						}
 					}
-					go db.PruneDeadSessions(d, liveTmux)
+					go db.PruneDeadSessions(d, liveTmux, env.Fs, env.Home, env.Clock)
 				}
 			}
 		}
@@ -312,7 +319,7 @@ func readFrame(conn net.Conn, deadline time.Duration) []*Session {
 	return sessions
 }
 
-func seedFromDB(d *sql.DB) []*Session {
+func seedFromDB(env *Env, d *sql.DB) []*Session {
 	workstreams := db.AllWorkstreams(d)
 	var sessions []*Session
 	for _, ws := range workstreams {
@@ -324,7 +331,7 @@ func seedFromDB(d *sql.DB) []*Session {
 			sessions = append(sessions, &Session{
 				SessionID:   cs.SessionID,
 				TmuxSession: ws.TmuxID,
-				ClaudeName:  readAgentNameFromJSONL(cs.SessionID),
+				ClaudeName:  ReadAgentNameFromJSONL(env.Fs, env.Home, cs.SessionID),
 				Summary:     db.LoadSummaryDB(d, cs.SessionID),
 				Status:      status,
 			})
@@ -333,7 +340,7 @@ func seedFromDB(d *sql.DB) []*Session {
 	return sessions
 }
 
-func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
+func reconcileDBWithLive(env *Env, d *sql.DB, liveSessions []*Session) []*Session {
 	liveByTmux := make(map[string]map[string]bool)
 	for _, s := range liveSessions {
 		if s.TmuxSession == "" {
@@ -357,7 +364,7 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 			}
 			for sid := range liveIDs {
 				if !knownIDs[sid] {
-					db.AddClaudeSession(d, ws.WorkstreamID, sid)
+					db.AddClaudeSession(d, ws.WorkstreamID, sid, env.Clock)
 				}
 			}
 		}
@@ -391,7 +398,7 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 				SessionID:       cs.SessionID,
 				TmuxSession:     ws.TmuxID,
 				TmuxDisplayName: ws.DisplayName,
-				ClaudeName:      readAgentNameFromJSONL(cs.SessionID),
+				ClaudeName:      ReadAgentNameFromJSONL(env.Fs, env.Home, cs.SessionID),
 				Summary:         db.LoadSummaryDB(d, cs.SessionID),
 				Status:          status,
 			})
@@ -421,11 +428,15 @@ func cleanupSoftDeleted(d *sql.DB, liveSessions []*Session) {
 }
 
 func readAgentNameFromJSONL(sessionID string) string {
-	path := findJSONLBySessionID(sessionID)
+	return ReadAgentNameFromJSONL(afero.NewOsFs(), homeDir(), sessionID)
+}
+
+func ReadAgentNameFromJSONL(fs afero.Fs, home, sessionID string) string {
+	path := db.FindJSONLPath(fs, home, sessionID)
 	if path == "" {
 		return ""
 	}
-	f, err := os.Open(path)
+	f, err := fs.Open(path)
 	if err != nil {
 		return ""
 	}
@@ -450,6 +461,11 @@ func readAgentNameFromJSONL(sessionID string) string {
 
 func jsonlExistsForSession(sessionID string) bool {
 	return FindSessionCWD(sessionID) != "" || findJSONLBySessionID(sessionID) != ""
+}
+
+func homeDir() string {
+	h, _ := os.UserHomeDir()
+	return h
 }
 
 func discoverTmuxSessions(prev map[string]*Session) []*Session {

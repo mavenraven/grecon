@@ -166,7 +166,7 @@ func handleCreateSession(cmd Command) CommandResponse {
 
 	displayName := sanitizeSessionName(cmd.Name)
 
-	tmuxID, err := db.CreateWorkstreamDB(d, displayName)
+	tmuxID, err := db.CreateWorkstreamDB(d, displayName, time.Now)
 	if err != nil {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("create workstream: %v", err)}
 	}
@@ -248,7 +248,7 @@ func handleDeleteSession(cmd Command) CommandResponse {
 	if cmd.SessionID == "" {
 		return CommandResponse{OK: false, Error: "no session_id"}
 	}
-	db.SoftDeleteSession(d, cmd.SessionID)
+	db.SoftDeleteSession(d, cmd.SessionID, time.Now)
 	return CommandResponse{OK: true}
 }
 

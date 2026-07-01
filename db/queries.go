@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/spf13/afero"
 )
 
 type WorkstreamInfo struct {
@@ -26,17 +26,13 @@ type ClaudeSessionInfo struct {
 	Active    bool
 }
 
-func now() string {
-	return time.Now().UTC().Format(time.RFC3339)
-}
-
-func CreateWorkstreamDB(d *sql.DB, displayName string) (string, error) {
+func CreateWorkstreamDB(d *sql.DB, displayName string, clock func() time.Time) (string, error) {
 	tx, err := d.Begin()
 	if err != nil {
 		return "", fmt.Errorf("begin: %w", err)
 	}
 
-	ts := now()
+	ts := clock().UTC().Format(time.RFC3339)
 	result, err := tx.Exec(`INSERT INTO workstreams (created_at) VALUES (?)`, ts)
 	if err != nil {
 		tx.Rollback()
@@ -102,9 +98,9 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	return workstreams
 }
 
-func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
-	ts := now()
-	cutoff := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
+func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool, fs afero.Fs, home string, clock func() time.Time) {
+	ts := clock().UTC().Format(time.RFC3339)
+	cutoff := clock().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
 
 	rows, err := d.Query(`SELECT id, session_id, workstream_id, created_at FROM claude_sessions WHERE deleted_at = ''`)
 	if err != nil {
@@ -129,9 +125,9 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 		if c.createdAt > cutoff {
 			continue
 		}
-		if c.sessionID == "" || !jsonlExists(c.sessionID) {
+		if c.sessionID == "" || !JSONLExists(fs, home, c.sessionID) {
 			d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE id = ?`, ts, c.id)
-		} else if worktreeGone(c.sessionID) {
+		} else if WorktreeGone(fs, home, c.sessionID) {
 			d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE id = ?`, ts, c.id)
 		}
 	}
@@ -164,31 +160,27 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 	}
 }
 
-func jsonlExists(sessionID string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return true
-	}
+func JSONLExists(fs afero.Fs, home, sessionID string) bool {
 	projectsDir := filepath.Join(home, ".claude", "projects")
-	entries, err := os.ReadDir(projectsDir)
+	entries, err := afero.ReadDir(fs, projectsDir)
 	if err != nil {
 		return true
 	}
 	for _, entry := range entries {
 		path := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
-		if _, err := os.Stat(path); err == nil {
+		if _, err := fs.Stat(path); err == nil {
 			return true
 		}
 	}
 	return false
 }
 
-func worktreeGone(sessionID string) bool {
-	path := findJSONLPath(sessionID)
+func WorktreeGone(fs afero.Fs, home, sessionID string) bool {
+	path := FindJSONLPath(fs, home, sessionID)
 	if path == "" {
 		return false
 	}
-	f, err := os.Open(path)
+	f, err := fs.Open(path)
 	if err != nil {
 		return false
 	}
@@ -225,23 +217,19 @@ func worktreeGone(sessionID string) bool {
 	if lastWorktreePath == "" {
 		return true
 	}
-	_, err = os.Stat(lastWorktreePath)
+	_, err = fs.Stat(lastWorktreePath)
 	return err != nil
 }
 
-func findJSONLPath(sessionID string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
+func FindJSONLPath(fs afero.Fs, home, sessionID string) string {
 	projectsDir := filepath.Join(home, ".claude", "projects")
-	entries, err := os.ReadDir(projectsDir)
+	entries, err := afero.ReadDir(fs, projectsDir)
 	if err != nil {
 		return ""
 	}
 	for _, entry := range entries {
 		path := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
-		if _, err := os.Stat(path); err == nil {
+		if _, err := fs.Stat(path); err == nil {
 			return path
 		}
 	}
@@ -258,7 +246,6 @@ func LoadTmuxNameDB(d *sql.DB, sessionID string) string {
 	return name
 }
 
-
 func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 	d.Exec(
 		`UPDATE claude_sessions SET summary = ? WHERE session_id = ? AND deleted_at = ''`,
@@ -266,16 +253,16 @@ func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 	)
 }
 
-func DeleteWorkstream(d *sql.DB, wsID int64) {
-	ts := now()
+func DeleteWorkstream(d *sql.DB, wsID int64, clock func() time.Time) {
+	ts := clock().UTC().Format(time.RFC3339)
 	d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE workstream_id = ? AND deleted_at = ''`, ts, wsID)
 	d.Exec(`UPDATE tmux_sessions SET deleted_at = ? WHERE workstream_id = ? AND deleted_at = ''`, ts, wsID)
 	d.Exec(`UPDATE workstreams SET deleted_at = ? WHERE id = ? AND deleted_at = ''`, ts, wsID)
 }
 
-func SoftDeleteSession(d *sql.DB, sessionID string) {
+func SoftDeleteSession(d *sql.DB, sessionID string, clock func() time.Time) {
 	d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE session_id = ? AND deleted_at = ''`,
-		now(), sessionID)
+		clock().UTC().Format(time.RFC3339), sessionID)
 }
 
 func SoftDeletedSessionIDs(d *sql.DB) []string {
@@ -308,13 +295,12 @@ func LoadSummaryDB(d *sql.DB, sessionID string) string {
 	return summary
 }
 
-func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID string) {
+func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID string, clock func() time.Time) {
 	d.Exec(
 		`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, created_at) VALUES (?, ?, ?)`,
-		workstreamID, sessionID, now(),
+		workstreamID, sessionID, clock().UTC().Format(time.RFC3339),
 	)
 }
-
 
 func UpdateSessionID(d *sql.DB, workstreamID int64, sessionID string) {
 	d.Exec(
@@ -322,4 +308,3 @@ func UpdateSessionID(d *sql.DB, workstreamID int64, sessionID string) {
 		sessionID, workstreamID,
 	)
 }
-
