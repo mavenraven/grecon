@@ -239,8 +239,182 @@ func TestIntegration_NavigationWraps(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		m = sendKey(m, 'j')
 	}
-	// Should not panic, selection should be clamped
 	if m.app.Selected < 0 {
 		t.Fatal("selection should not go negative")
+	}
+	count := m.app.SelectableCount()
+	if count > 0 && m.app.Selected >= count {
+		t.Fatalf("selection %d should be < count %d", m.app.Selected, count)
+	}
+}
+
+func testSessions() []*server.Session {
+	return []*server.Session{
+		{SessionID: "s1", TmuxSession: "u1", TmuxDisplayName: "proj-a", ClaudeName: "a", Status: server.StatusIdle},
+		{SessionID: "s2", TmuxSession: "u1", TmuxDisplayName: "proj-a", ClaudeName: "b", Status: server.StatusIdle},
+		{SessionID: "s3", TmuxSession: "u2", TmuxDisplayName: "proj-b", ClaudeName: "c", Status: server.StatusIdle},
+		{SessionID: "s4", TmuxSession: "u2", TmuxDisplayName: "proj-b", ClaudeName: "d", Status: server.StatusIdle},
+		{SessionID: "s5", TmuxSession: "u3", TmuxDisplayName: "proj-c", ClaudeName: "e", Status: server.StatusIdle},
+	}
+}
+
+func TestIntegration_JMovesDown(t *testing.T) {
+	m := newTestTUI(testSessions())
+
+	start := m.app.Selected
+	m = sendKey(m, 'j')
+
+	if m.app.Selected != start+1 {
+		t.Fatalf("j should move down, expected %d got %d", start+1, m.app.Selected)
+	}
+}
+
+func TestIntegration_KMovesUp(t *testing.T) {
+	m := newTestTUI(testSessions())
+
+	m = sendKey(m, 'j')
+	m = sendKey(m, 'j')
+	pos := m.app.Selected
+	m = sendKey(m, 'k')
+
+	if m.app.Selected != pos-1 {
+		t.Fatalf("k should move up, expected %d got %d", pos-1, m.app.Selected)
+	}
+}
+
+func TestIntegration_KDoesNotGoBelowZero(t *testing.T) {
+	m := newTestTUI(testSessions())
+
+	for i := 0; i < 5; i++ {
+		m = sendKey(m, 'k')
+	}
+
+	if m.app.Selected != 0 {
+		t.Fatalf("k should not go below 0, got %d", m.app.Selected)
+	}
+}
+
+func TestIntegration_JClampsAtEnd(t *testing.T) {
+	m := newTestTUI(testSessions())
+	count := m.app.SelectableCount()
+
+	for i := 0; i < count+5; i++ {
+		m = sendKey(m, 'j')
+	}
+
+	if m.app.Selected != count-1 {
+		t.Fatalf("j should clamp at %d, got %d", count-1, m.app.Selected)
+	}
+}
+
+func TestIntegration_GGoesToBottom(t *testing.T) {
+	m := newTestTUI(testSessions())
+	count := m.app.SelectableCount()
+
+	m = sendKey(m, 'G')
+
+	if m.app.Selected != count-1 {
+		t.Fatalf("G should go to last item %d, got %d", count-1, m.app.Selected)
+	}
+}
+
+func TestIntegration_ggGoesToTop(t *testing.T) {
+	m := newTestTUI(testSessions())
+
+	m = sendKey(m, 'G')
+	m = sendKey(m, 'g')
+	m = sendKey(m, 'g')
+
+	if m.app.Selected != 0 {
+		t.Fatalf("gg should go to top, got %d", m.app.Selected)
+	}
+}
+
+func TestIntegration_MGoesToMiddle(t *testing.T) {
+	m := newTestTUI(testSessions())
+	count := m.app.SelectableCount()
+
+	m = sendKey(m, 'M')
+
+	expected := count / 2
+	if m.app.Selected != expected {
+		t.Fatalf("M should go to middle %d, got %d", expected, m.app.Selected)
+	}
+}
+
+func TestIntegration_CtrlDPageDown(t *testing.T) {
+	m := newTestTUI(testSessions())
+	m.app.PageSize = 2
+
+	m = sendKey(m, 'j') // start from 1
+	start := m.app.Selected
+
+	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = result.(tuiModel)
+
+	if m.app.Selected <= start {
+		t.Fatalf("ctrl-d should page down from %d, got %d", start, m.app.Selected)
+	}
+}
+
+func TestIntegration_CtrlUPageUp(t *testing.T) {
+	m := newTestTUI(testSessions())
+	m.app.PageSize = 2
+
+	m = sendKey(m, 'G')
+	bottom := m.app.Selected
+
+	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = result.(tuiModel)
+
+	if m.app.Selected >= bottom {
+		t.Fatalf("ctrl-u should page up from %d, got %d", bottom, m.app.Selected)
+	}
+}
+
+func TestIntegration_SelectedSessionCorrect(t *testing.T) {
+	m := newTestTUI(testSessions())
+
+	m = sendKey(m, 'j') // first selectable
+	s := m.app.SelectedSession()
+	if s == nil {
+		t.Fatal("should have a selected session")
+	}
+
+	m = sendKey(m, 'j') // second selectable
+	s2 := m.app.SelectedSession()
+	if s2 == nil {
+		t.Fatal("should have a selected session")
+	}
+	if s.SessionID == s2.SessionID {
+		t.Fatal("moving down should select a different session")
+	}
+}
+
+func TestIntegration_FooterShowsNewKey(t *testing.T) {
+	m := newTestTUI(testSessions())
+	view := m.View()
+
+	if !strings.Contains(view, "new") {
+		t.Fatal("footer should show 'n new' keybinding")
+	}
+}
+
+func TestIntegration_EmptyListNavigation(t *testing.T) {
+	m := newTestTUI([]*server.Session{})
+
+	// Should not panic
+	m = sendKey(m, 'j')
+	m = sendKey(m, 'k')
+	m = sendKey(m, 'G')
+	m = sendKey(m, 'g')
+	m = sendKey(m, 'g')
+	m = sendKey(m, 'M')
+
+	if m.app.Selected != 0 {
+		t.Fatalf("empty list should keep selection at 0, got %d", m.app.Selected)
+	}
+	if m.app.SelectedSession() != nil {
+		t.Fatal("empty list should return nil for SelectedSession")
 	}
 }

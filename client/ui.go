@@ -540,6 +540,7 @@ func renderFooter(b *strings.Builder, app *App, width int) {
 	} else {
 		line = cyanStyle.Render("j/k") + " navigate  " +
 			cyanStyle.Render("Enter") + " switch  " +
+			cyanStyle.Render("n") + " new  " +
 			cyanStyle.Render("x") + " kill  " +
 			cyanStyle.Render("/") + " search  " +
 			cyanStyle.Render("i") + " next input  " +
