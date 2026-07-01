@@ -285,6 +285,78 @@ func TestValidateCWD_RejectsNonExistentPath(t *testing.T) {
 	}
 }
 
+// --- ValidateCWDFS ---
+
+func TestValidateCWDFS_AcceptsExistingDir(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	fs.MkdirAll("/projects/myapp", 0o755)
+	if !ValidateCWDFS(fs, "/projects/myapp") {
+		t.Fatal("existing dir should be valid")
+	}
+}
+
+func TestValidateCWDFS_RejectsNonExistent(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	if ValidateCWDFS(fs, "/nope") {
+		t.Fatal("nonexistent path should be rejected")
+	}
+}
+
+func TestValidateCWDFS_RejectsRelative(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	if ValidateCWDFS(fs, "relative/path") {
+		t.Fatal("relative path should be rejected")
+	}
+}
+
+func TestValidateCWDFS_RejectsFile(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	afero.WriteFile(fs, "/afile.txt", []byte("hi"), 0o644)
+	if ValidateCWDFS(fs, "/afile.txt") {
+		t.Fatal("regular file should be rejected")
+	}
+}
+
+// --- FindSessionCWDFS ---
+
+func TestFindSessionCWDFS_FindsCWD(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	home := "/fakehome"
+	writeTestJSONL(fs, home, "-myproject", "sess-1",
+		`{"type":"user","cwd":"/home/user/project"}`,
+	)
+
+	cwd := FindSessionCWDFS(fs, home, "sess-1")
+	if cwd != "/home/user/project" {
+		t.Fatalf("expected /home/user/project, got %s", cwd)
+	}
+}
+
+func TestFindSessionCWDFS_ReturnsEmptyWhenMissing(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	fs.MkdirAll("/fakehome/.claude/projects", 0o755)
+
+	cwd := FindSessionCWDFS(fs, "/fakehome", "nonexistent")
+	if cwd != "" {
+		t.Fatalf("expected empty, got %s", cwd)
+	}
+}
+
+func TestFindSessionCWDFS_SkipsNonCWDLines(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	home := "/fakehome"
+	writeTestJSONL(fs, home, "-proj", "sess-1",
+		`{"type":"last-prompt"}`,
+		`{"type":"agent-name","agentName":"test"}`,
+		`{"type":"user","cwd":"/the/cwd"}`,
+	)
+
+	cwd := FindSessionCWDFS(fs, home, "sess-1")
+	if cwd != "/the/cwd" {
+		t.Fatalf("expected /the/cwd, got %s", cwd)
+	}
+}
+
 // --- markBgTaskLiveness ---
 
 func TestMarkBgTaskLiveness_AliveMark(t *testing.T) {

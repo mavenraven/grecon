@@ -292,15 +292,19 @@ func injectClaudeAlias(sessionName string) {
 }
 
 func fixDefaultPath(tmuxSession string) {
+	fixDefaultPathWith(RealEnv().Cmd, tmuxSession, 500*time.Millisecond)
+}
+
+func fixDefaultPathWith(cmd CommandRunner, tmuxSession string, pollInterval time.Duration) {
 	for i := 0; i < 30; i++ {
-		time.Sleep(500 * time.Millisecond)
-		out, err := exec.Command("tmux", "display-message", "-t", tmuxSession+":0.0", "-p", "#{pane_current_path}").Output()
+		time.Sleep(pollInterval)
+		out, err := cmd.Output("tmux", "display-message", "-t", tmuxSession+":0.0", "-p", "#{pane_current_path}")
 		if err != nil {
 			continue
 		}
 		panePath := strings.TrimSpace(string(out))
 		if strings.Contains(panePath, "/.claude/worktrees/") {
-			exec.Command("tmux", "attach-session", "-t", tmuxSession, "-c", panePath).Run()
+			cmd.Run("tmux", "attach-session", "-t", tmuxSession, "-c", panePath)
 			return
 		}
 	}
