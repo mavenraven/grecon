@@ -271,6 +271,26 @@ func DeleteWorkstream(d *sql.DB, wsID int64) {
 	d.Exec(`UPDATE workstreams SET deleted_at = ? WHERE id = ? AND deleted_at = ''`, ts, wsID)
 }
 
+func SoftDeleteSession(d *sql.DB, sessionID string) {
+	d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE session_id = ? AND deleted_at = ''`,
+		now(), sessionID)
+}
+
+func SoftDeletedSessionIDs(d *sql.DB) []string {
+	rows, err := d.Query(`SELECT session_id FROM claude_sessions WHERE deleted_at != '' AND session_id != ''`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func SetSessionActive(d *sql.DB, sessionID string, active bool) {
 	val := 0
 	if active {

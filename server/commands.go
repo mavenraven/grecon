@@ -133,6 +133,8 @@ func handleCommand(conn net.Conn) {
 		resp = handleCreateSession(cmd)
 	case "reactivate-session":
 		resp = handleReactivateSession(cmd)
+	case "delete-session":
+		resp = handleDeleteSession(cmd)
 	default:
 		resp = CommandResponse{OK: false, Error: "unknown command"}
 	}
@@ -235,6 +237,18 @@ func handleReactivateSession(cmd Command) CommandResponse {
 	}
 
 	return CommandResponse{OK: true, TmuxSession: tmuxSession}
+}
+
+func handleDeleteSession(cmd Command) CommandResponse {
+	d := db.Get()
+	if d == nil {
+		return CommandResponse{OK: false, Error: "no database"}
+	}
+	if cmd.SessionID == "" {
+		return CommandResponse{OK: false, Error: "no session_id"}
+	}
+	db.SoftDeleteSession(d, cmd.SessionID)
+	return CommandResponse{OK: true}
 }
 
 func sanitizeSessionName(name string) string {

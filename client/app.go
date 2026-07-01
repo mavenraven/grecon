@@ -347,8 +347,8 @@ func (a *App) handleKeyTable(code string, ctrl bool) {
 		}
 	case "x":
 		if s := a.SelectedSession(); s != nil {
-			if s.TmuxSession != "" {
-				KillSession(s.TmuxSession)
+			if s.SessionID != "" {
+				DeleteSession(s.SessionID)
 			}
 		}
 	}

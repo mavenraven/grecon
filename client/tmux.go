@@ -56,6 +56,13 @@ func CreateSession(name, cwd, claudeName string, command *string, tags []string,
 	return resp.TmuxSession, nil
 }
 
+func DeleteSession(sessionID string) {
+	server.SendCommand(server.Command{
+		Type:      "delete-session",
+		SessionID: sessionID,
+	})
+}
+
 func ReactivateSession(sessionID, tmuxSession string) error {
 	resp, err := server.SendCommand(server.Command{
 		Type:        "reactivate-session",
