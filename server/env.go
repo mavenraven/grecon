@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/afero"
@@ -11,6 +14,7 @@ import (
 type CommandRunner interface {
 	Run(name string, args ...string) error
 	Output(name string, args ...string) ([]byte, error)
+	RunWithStdin(stdin string, name string, args ...string) (string, error)
 }
 
 type Env struct {
@@ -38,4 +42,14 @@ func (r *realCmd) Run(name string, args ...string) error {
 
 func (r *realCmd) Output(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).Output()
+}
+
+func (r *realCmd) RunWithStdin(stdin string, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Stdin = strings.NewReader(stdin)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	err := cmd.Run()
+	return strings.TrimSpace(out.String()), err
 }

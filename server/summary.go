@@ -1,29 +1,21 @@
 package server
 
 import (
-	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 
 	"grecon/db"
 
 	"github.com/spf13/afero"
 )
 
-const (
-	maxTextForSummary = 8000
-	summaryTimeout    = 30 * time.Second
-)
+const maxTextForSummary = 8000
 
 type summaryState struct {
 	mu      sync.Mutex
@@ -243,35 +235,28 @@ func hashEntry(s string) string {
 }
 
 func generateSummary(key, text string) {
+	generateSummaryWith(RealEnv().Cmd, key, text)
+}
+
+func generateSummaryWith(cmd CommandRunner, key, text string) {
 	defer func() {
 		globalSummary.mu.Lock()
 		globalSummary.pending[key] = false
 		globalSummary.mu.Unlock()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), summaryTimeout)
-	defer cancel()
+	prompt := fmt.Sprintf("Reply with ONLY a one-line summary (under 80 chars) of this AI assistant activity. No tools, no questions, no commentary.\n\nActivity:\n%s", stripURLs(text))
 
-	cmd := exec.CommandContext(ctx, "claude", "-p",
+	summary, err := cmd.RunWithStdin(prompt, "claude", "-p",
 		"--model", "haiku",
 		"--no-session-persistence",
 		"--system-prompt", "You are a summarizer. Output one line under 80 chars. Never use tools. Never ask questions.",
 	)
-	cmd.Dir = os.TempDir()
-
-	prompt := fmt.Sprintf("Reply with ONLY a one-line summary (under 80 chars) of this AI assistant activity. No tools, no questions, no commentary.\n\nActivity:\n%s", stripURLs(text))
-	cmd.Stdin = strings.NewReader(prompt)
-
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
-
-	if err := cmd.Run(); err != nil {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "summary for %s: %v\n", key[:min(8, len(key))], err)
 		return
 	}
 
-	summary := strings.TrimSpace(out.String())
 	if summary == "" {
 		return
 	}

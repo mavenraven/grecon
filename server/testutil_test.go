@@ -9,13 +9,26 @@ import (
 )
 
 type fakeCmd struct {
-	Runs    [][]string
-	Outputs map[string][]byte
+	Runs       [][]string
+	Outputs    map[string][]byte
+	StdinCalls []stdinCall
+	StdinOut   string
+	StdinErr   error
+}
+
+type stdinCall struct {
+	Stdin string
+	Args  []string
 }
 
 func (f *fakeCmd) Run(name string, args ...string) error {
 	f.Runs = append(f.Runs, append([]string{name}, args...))
 	return nil
+}
+
+func (f *fakeCmd) RunWithStdin(stdin string, name string, args ...string) (string, error) {
+	f.StdinCalls = append(f.StdinCalls, stdinCall{Stdin: stdin, Args: append([]string{name}, args...)})
+	return f.StdinOut, f.StdinErr
 }
 
 func (f *fakeCmd) Output(name string, args ...string) ([]byte, error) {

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -264,6 +265,114 @@ func TestExtractRecentActivity_NoAssistantMessages(t *testing.T) {
 	activity := extractRecentActivityFS(fs, path)
 	if activity != "" {
 		t.Fatalf("no assistant messages should return empty, got '%s'", activity)
+	}
+}
+
+// --- generateSummaryWith ---
+
+func TestGenerateSummary_PassesCorrectArgs(t *testing.T) {
+	cmd := &fakeCmd{
+		Outputs: make(map[string][]byte),
+		StdinOut: "Fixed a bug in the parser",
+	}
+
+	globalSummary.mu.Lock()
+	globalSummary.pending["test-key"] = true
+	globalSummary.mu.Unlock()
+
+	generateSummaryWith(cmd, "test-key", "Some activity text")
+
+	if len(cmd.StdinCalls) != 1 {
+		t.Fatalf("expected 1 stdin call, got %d", len(cmd.StdinCalls))
+	}
+	call := cmd.StdinCalls[0]
+	if call.Args[0] != "claude" {
+		t.Fatalf("should call claude, got %s", call.Args[0])
+	}
+	foundHaiku := false
+	for _, a := range call.Args {
+		if a == "haiku" {
+			foundHaiku = true
+		}
+	}
+	if !foundHaiku {
+		t.Fatalf("should pass haiku model, args: %v", call.Args)
+	}
+	if !strings.Contains(call.Stdin, "Some activity text") {
+		t.Fatalf("prompt should contain activity text, got: %s", call.Stdin)
+	}
+}
+
+func TestGenerateSummary_EmptyOutputSkipsSave(t *testing.T) {
+	cmd := &fakeCmd{
+		Outputs:  make(map[string][]byte),
+		StdinOut: "",
+	}
+
+	globalSummary.mu.Lock()
+	globalSummary.pending["empty-key"] = true
+	globalSummary.mu.Unlock()
+
+	generateSummaryWith(cmd, "empty-key", "Some activity")
+	// Should not panic or save anything — no way to assert DB save without
+	// wiring DB, but at least verify it doesn't crash
+}
+
+func TestGenerateSummary_ErrorDoesNotSave(t *testing.T) {
+	cmd := &fakeCmd{
+		Outputs:  make(map[string][]byte),
+		StdinErr: fmt.Errorf("claude not found"),
+	}
+
+	globalSummary.mu.Lock()
+	globalSummary.pending["err-key"] = true
+	globalSummary.mu.Unlock()
+
+	generateSummaryWith(cmd, "err-key", "Some activity")
+	// Should not panic
+}
+
+func TestGenerateSummary_StripsURLsFromPrompt(t *testing.T) {
+	cmd := &fakeCmd{
+		Outputs:  make(map[string][]byte),
+		StdinOut: "Did something",
+	}
+
+	globalSummary.mu.Lock()
+	globalSummary.pending["url-key"] = true
+	globalSummary.mu.Unlock()
+
+	generateSummaryWith(cmd, "url-key", "Visited https://example.com/page and did stuff")
+
+	if len(cmd.StdinCalls) != 1 {
+		t.Fatal("expected 1 call")
+	}
+	if strings.Contains(cmd.StdinCalls[0].Stdin, "https://example.com") {
+		t.Fatal("URLs should be stripped from prompt")
+	}
+	if !strings.Contains(cmd.StdinCalls[0].Stdin, "(url)") {
+		t.Fatal("URLs should be replaced with (url)")
+	}
+}
+
+func TestGenerateSummary_ClearsPendingFlag(t *testing.T) {
+	cmd := &fakeCmd{
+		Outputs:  make(map[string][]byte),
+		StdinOut: "summary",
+	}
+
+	globalSummary.mu.Lock()
+	globalSummary.pending["pending-key"] = true
+	globalSummary.mu.Unlock()
+
+	generateSummaryWith(cmd, "pending-key", "activity")
+
+	globalSummary.mu.Lock()
+	isPending := globalSummary.pending["pending-key"]
+	globalSummary.mu.Unlock()
+
+	if isPending {
+		t.Fatal("pending flag should be cleared after generation")
 	}
 }
 

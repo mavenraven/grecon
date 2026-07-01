@@ -53,6 +53,10 @@ func Get() *sql.DB {
 	return global
 }
 
+func SetGlobal(d *sql.DB) {
+	global = d
+}
+
 func OpenClient() *sql.DB {
 	if global != nil {
 		return global
