@@ -377,8 +377,6 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 	for _, ws := range workstreams {
 		liveIDs := liveByTmux[ws.DisplayName]
 
-		worktreeGone := ws.Worktree != "" && !ValidateCWD(ws.Worktree)
-
 		for _, cs := range ws.Sessions {
 			if liveIDs != nil && liveIDs[cs.SessionID] {
 				continue
@@ -388,12 +386,11 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 				status = StatusDeleted
 			}
 			liveSessions = append(liveSessions, &Session{
-				SessionID:    cs.SessionID,
-				TmuxSession:  ws.DisplayName,
-				ClaudeName:   cs.DisplayName,
-				Summary:      db.LoadSummaryDB(d, cs.SessionID),
-				Status:       status,
-				WorktreeGone: worktreeGone,
+				SessionID:   cs.SessionID,
+				TmuxSession: ws.DisplayName,
+				ClaudeName:  cs.DisplayName,
+				Summary:     db.LoadSummaryDB(d, cs.SessionID),
+				Status:      status,
 			})
 		}
 	}

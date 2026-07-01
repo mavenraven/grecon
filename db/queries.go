@@ -12,7 +12,6 @@ type WorkstreamInfo struct {
 	WorkstreamID int64
 	TmuxID       string
 	DisplayName  string
-	Worktree     string
 	CreatedAt    string
 	Sessions     []ClaudeSessionInfo
 }
@@ -23,14 +22,14 @@ type ClaudeSessionInfo struct {
 	Active      bool
 }
 
-func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) error {
+func CreateWorkstreamDB(d *sql.DB, tmuxSession string) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := tx.Exec(`INSERT INTO workstreams (worktree, created_at) VALUES (?, ?)`, worktree, now)
+	result, err := tx.Exec(`INSERT INTO workstreams (created_at) VALUES (?)`, now)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("insert workstream: %w", err)
@@ -52,7 +51,7 @@ func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) error {
 
 func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	rows, err := d.Query(`
-		SELECT w.id, t.tmux_id, t.display_name, COALESCE(w.worktree, ''), COALESCE(w.created_at, '')
+		SELECT w.id, t.tmux_id, t.display_name, COALESCE(w.created_at, '')
 		FROM workstreams w
 		JOIN tmux_sessions t ON t.workstream_id = w.id
 		ORDER BY w.id
@@ -64,7 +63,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	var workstreams []WorkstreamInfo
 	for rows.Next() {
 		var ws WorkstreamInfo
-		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &ws.Worktree, &ws.CreatedAt)
+		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &ws.CreatedAt)
 		workstreams = append(workstreams, ws)
 	}
 	rows.Close()

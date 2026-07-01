@@ -165,12 +165,7 @@ func handleCreateSession(cmd Command) CommandResponse {
 	baseName := sanitizeSessionName(cmd.Name)
 	sessionName := uniqueTmuxName(baseName)
 
-	var worktreePath string
-	if cmd.Worktree {
-		worktreePath = cmd.CWD
-	}
-
-	if err := db.CreateWorkstreamDB(d, sessionName, worktreePath); err != nil {
+	if err := db.CreateWorkstreamDB(d, sessionName); err != nil {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("create workstream: %v", err)}
 	}
 

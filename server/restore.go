@@ -35,10 +35,7 @@ func Reconcile(d *sql.DB) {
 		}
 
 		first := activeSessions[0]
-		cwd := ws.Worktree
-		if cwd == "" {
-			cwd = FindSessionCWD(first.SessionID)
-		}
+		cwd := FindSessionCWD(first.SessionID)
 		if cwd == "" || !ValidateCWD(cwd) {
 			fmt.Fprintf(os.Stderr, "reconcile: skip %s: bad cwd %q\n", ws.DisplayName, cwd)
 			continue

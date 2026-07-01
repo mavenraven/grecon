@@ -261,14 +261,9 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 			nameCol := ansiColor("90", prefix) + truncEllipsis(agentName, colName-visibleWidth(prefix))
 
 			statusCol := formatStatus(s.Status)
-			if s.WorktreeGone {
-				statusCol = ansiColor("31", "○ No WT")
-			}
 
 			summaryCol := s.Summary
-			if s.WorktreeGone {
-				summaryCol = ansiColor("31", "worktree deleted")
-			} else if summaryCol == "" {
+			if summaryCol == "" {
 				summaryCol = ansiColor("90", "—")
 			}
 

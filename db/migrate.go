@@ -38,6 +38,8 @@ var migrations = []string{
 	`UPDATE workstreams SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE created_at = '';
 	UPDATE tmux_sessions SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE created_at = '';
 	UPDATE claude_sessions SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE created_at = '';`,
+
+	`ALTER TABLE workstreams DROP COLUMN worktree;`,
 }
 
 func migrate(d *sql.DB) error {
