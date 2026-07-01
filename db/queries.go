@@ -105,8 +105,9 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 
 func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 	ts := now()
+	cutoff := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
 
-	rows, err := d.Query(`SELECT id, session_id, workstream_id FROM claude_sessions WHERE deleted_at = ''`)
+	rows, err := d.Query(`SELECT id, session_id, workstream_id, created_at FROM claude_sessions WHERE deleted_at = ''`)
 	if err != nil {
 		return
 	}
@@ -115,16 +116,20 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 		id        int64
 		sessionID string
 		wsID      int64
+		createdAt string
 	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		rows.Scan(&c.id, &c.sessionID, &c.wsID)
+		rows.Scan(&c.id, &c.sessionID, &c.wsID, &c.createdAt)
 		candidates = append(candidates, c)
 	}
 	rows.Close()
 
 	for _, c := range candidates {
+		if c.createdAt > cutoff {
+			continue
+		}
 		if c.sessionID == "" || !jsonlExists(c.sessionID) {
 			d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE id = ?`, ts, c.id)
 		} else if worktreeGone(c.sessionID) {
@@ -146,7 +151,6 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 		tmuxRows.Close()
 	}
 
-	cutoff := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
 	for _, ws := range AllWorkstreams(d) {
 		if liveWSIDs[ws.WorkstreamID] {
 			continue
