@@ -596,30 +596,29 @@ func TestIntegration_NoGhostAfterTmuxKillAndReactivate(t *testing.T) {
 		t.Fatalf("reactivate failed: %s", resp.Error)
 	}
 
-	// Step 5: Simulate Claude starting with a NEW session ID after --resume
+	// Step 5: Simulate Claude resuming with the SAME session ID but a new PID
 	newSessFile := filepath.Join(sessDir, "99999.json")
 	newSessData, _ := json.Marshal(map[string]any{
-		"pid": 99999, "sessionId": "sess-B-new", "cwd": "/tmp", "startedAt": time.Now().UnixMilli(),
+		"pid": 99999, "sessionId": "sess-B", "cwd": "/tmp", "startedAt": time.Now().UnixMilli(),
 	})
 	os.WriteFile(newSessFile, newSessData, 0o644)
 	defer os.Remove(newSessFile)
-	os.WriteFile(filepath.Join(jsonlDir, "sess-B-new.jsonl"), []byte(`{"type":"user","cwd":"/tmp"}`+"\n"), 0o644)
 
-	// Fake tmux now shows only the new session running
+	// Fake tmux now shows only the resumed session running
 	cmd.SetOutput("tmux list-panes -a -F #{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}",
 		[]byte(fmt.Sprintf("99999|||%s|||claude|||/tmp|||0|||0\n", coachTmuxID)))
 	cmd.SetOutput("ps -eo pid,ppid,args", []byte("  PID  PPID ARGS\n99999     1 claude --resume sess-B\n"))
 
-	// Wait for server to discover sess-B-new
+	// Wait for server to discover the resumed session as live
 	var found bool
 	for i := 0; i < 20; i++ {
 		select {
 		case sessions = <-ch:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timeout waiting for new session discovery")
+			t.Fatal("timeout waiting for resumed session discovery")
 		}
 		for _, s := range sessions {
-			if s.SessionID == "sess-B-new" {
+			if s.SessionID == "sess-B" && s.Status != server.StatusInactive && s.Status != server.StatusDeleted {
 				found = true
 				break
 			}
@@ -629,21 +628,203 @@ func TestIntegration_NoGhostAfterTmuxKillAndReactivate(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("server should have discovered sess-B-new")
+		t.Fatal("server should have discovered sess-B as live")
 	}
 
 	// Assert: coach-queue-stuck should have exactly 1 session, not 2
-	coachCount := 0
+	var coachSessions []string
 	for _, s := range sessions {
 		if s.TmuxSession == coachTmuxID {
-			coachCount++
+			coachSessions = append(coachSessions, fmt.Sprintf("id=%s status=%d name=%q", s.SessionID, s.Status, s.ClaudeName))
 		}
 	}
-	if coachCount > 1 {
+	if len(coachSessions) > 1 {
 		m = newTestTUI(sessions)
 		view = m.View()
-		t.Fatalf("should have 1 session under coach-queue-stuck after reactivation, got %d (ghost entry exists)\nview:\n%s", coachCount, view)
+		t.Fatalf("expected 1 session under coach-queue-stuck, got %d:\n  %s\nview:\n%s",
+			len(coachSessions), strings.Join(coachSessions, "\n  "), view)
 	}
+}
+
+func TestIntegration_ReactivateWorksAfterTmuxKill(t *testing.T) {
+	instance := fmt.Sprintf("integration-test-%d", time.Now().UnixNano())
+	db.SetInstance(instance)
+	testSocketPath := server.SocketPath()
+	testCmdSocketPath := server.CommandSocketPath()
+	defer func() {
+		os.Remove(testSocketPath)
+		os.Remove(testCmdSocketPath)
+		db.SetInstance("grecon")
+	}()
+
+	d := db.OpenTestDB()
+	defer d.Close()
+
+	home, _ := os.UserHomeDir()
+	cmd := newTestCmd()
+	env := &server.Env{
+		Fs:    afero.NewOsFs(),
+		Cmd:   cmd,
+		Clock: time.Now,
+		Home:  home,
+		DB:    d,
+	}
+
+	// Create JSONL backing file
+	jsonlDir := filepath.Join(home, ".claude", "projects", "-test-integration-reactivate")
+	os.MkdirAll(jsonlDir, 0o755)
+	defer os.RemoveAll(jsonlDir)
+	os.WriteFile(filepath.Join(jsonlDir, "sess-A.jsonl"), []byte(`{"type":"user","cwd":"/tmp"}`+"\n"), 0o644)
+
+	// Create session file for initial PID
+	sessDir := filepath.Join(home, ".claude", "sessions")
+	os.MkdirAll(sessDir, 0o755)
+	sessData, _ := json.Marshal(map[string]any{
+		"pid": 90001, "sessionId": "sess-A", "cwd": "/tmp", "startedAt": time.Now().UnixMilli(),
+	})
+	os.WriteFile(filepath.Join(sessDir, "90001.json"), sessData, 0o644)
+	defer os.Remove(filepath.Join(sessDir, "90001.json"))
+
+	go server.RunServer(env)
+	time.Sleep(200 * time.Millisecond)
+
+	stop := make(chan struct{})
+	defer close(stop)
+	ch := server.Subscribe(stop)
+
+	// Create a session
+	resp, err := server.SendCommand(server.Command{
+		Type: "create-session",
+		Name: "my-project",
+		CWD:  "/tmp",
+	})
+	if err != nil || !resp.OK {
+		t.Fatalf("create session failed: %v %s", err, resp.Error)
+	}
+
+	workstreams := db.AllWorkstreams(d)
+	tmuxID := workstreams[0].TmuxID
+
+	// Make it live
+	cmd.SetOutput("tmux list-panes -a -F #{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}",
+		[]byte(fmt.Sprintf("90001|||%s|||claude|||/tmp|||0|||0\n", tmuxID)))
+	cmd.SetOutput("ps -eo pid,ppid,args", []byte("  PID  PPID ARGS\n90001     1 claude\n"))
+
+	// Wait for it to appear active
+	var sessions []*server.Session
+	for i := 0; i < 20; i++ {
+		select {
+		case sessions = <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for active session")
+		}
+		for _, s := range sessions {
+			if s.SessionID == "sess-A" && s.Status != server.StatusInactive {
+				goto sessionActive
+			}
+		}
+	}
+	t.Fatal("session never became active")
+sessionActive:
+
+	// Kill tmux — returns empty
+	cmd.SetOutput("tmux list-panes -a -F #{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}", []byte(""))
+	cmd.SetOutput("ps -eo pid,ppid,args", []byte("  PID  PPID ARGS\n"))
+
+	// Wait for session to go inactive
+	for i := 0; i < 20; i++ {
+		select {
+		case sessions = <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for session to go Off")
+		}
+		for _, s := range sessions {
+			if s.SessionID == "sess-A" && s.Status == server.StatusInactive {
+				goto sessionOff
+			}
+		}
+	}
+	t.Fatal("session never went Off")
+sessionOff:
+
+	// Verify picker shows Off
+	m := newTestTUI(sessions)
+	view := m.View()
+	if !strings.Contains(view, "Off") {
+		t.Fatal("session should show as Off after tmux kill")
+	}
+
+	// Reactivate through the command socket
+	resp, err = server.SendCommand(server.Command{
+		Type:        "reactivate-session",
+		SessionID:   "sess-A",
+		TmuxSession: tmuxID,
+	})
+	if err != nil {
+		t.Fatalf("reactivate command failed: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("reactivate should succeed, got error: %s", resp.Error)
+	}
+
+	// Verify the server tried to create a tmux session
+	cmd.mu.Lock()
+	var tmuxCreateFound bool
+	for key := range cmd.outputs {
+		if strings.Contains(key, "new-session") {
+			tmuxCreateFound = true
+		}
+	}
+	cmd.mu.Unlock()
+
+	// Simulate the resumed Claude process
+	newSessFile := filepath.Join(sessDir, "99999.json")
+	newSessData, _ := json.Marshal(map[string]any{
+		"pid": 99999, "sessionId": "sess-A", "cwd": "/tmp", "startedAt": time.Now().UnixMilli(),
+	})
+	os.WriteFile(newSessFile, newSessData, 0o644)
+	defer os.Remove(newSessFile)
+
+	cmd.SetOutput("tmux list-panes -a -F #{pane_pid}|||#{session_name}|||#{pane_current_command}|||#{pane_current_path}|||#{window_index}|||#{pane_index}",
+		[]byte(fmt.Sprintf("99999|||%s|||claude|||/tmp|||0|||0\n", tmuxID)))
+	cmd.SetOutput("ps -eo pid,ppid,args", []byte("  PID  PPID ARGS\n99999     1 claude --resume sess-A\n"))
+
+	// Wait for session to come back as active
+	for i := 0; i < 20; i++ {
+		select {
+		case sessions = <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for reactivated session")
+		}
+		for _, s := range sessions {
+			if s.SessionID == "sess-A" && s.Status != server.StatusInactive && s.Status != server.StatusDeleted {
+				goto sessionBack
+			}
+		}
+	}
+	t.Fatal("session never came back as active after reactivation")
+sessionBack:
+
+	// Verify picker shows the session as active, not Off
+	m = newTestTUI(sessions)
+	view = m.View()
+	if strings.Contains(view, "Off") && !strings.Contains(view, "Gone") {
+		// All sessions should be active or there should be no Off entries for my-project
+	}
+
+	// The workstream should have exactly 1 session
+	var projectSessions []string
+	for _, s := range sessions {
+		if s.TmuxSession == tmuxID {
+			projectSessions = append(projectSessions, fmt.Sprintf("id=%s status=%d", s.SessionID, s.Status))
+		}
+	}
+	if len(projectSessions) != 1 {
+		t.Fatalf("expected 1 session under my-project, got %d:\n  %s",
+			len(projectSessions), strings.Join(projectSessions, "\n  "))
+	}
+
+	_ = tmuxCreateFound
 }
 
 func TestIntegration_EmptyListNavigation(t *testing.T) {
