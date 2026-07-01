@@ -415,24 +415,10 @@ func cleanupSoftDeleted(d *sql.DB, liveSessions []*Session) {
 	for _, id := range db.SoftDeletedSessionIDs(d) {
 		deletedIDs[id] = true
 	}
-	if len(deletedIDs) == 0 {
-		return
-	}
 
-	// Kill panes for soft-deleted sessions that are still live
 	for _, s := range liveSessions {
 		if s.PaneTarget != "" && deletedIDs[s.SessionID] {
 			exec.Command("tmux", "kill-pane", "-t", s.PaneTarget).Run()
-		}
-	}
-
-	// Soft-delete workstreams with zero remaining sessions
-	for _, ws := range db.AllWorkstreams(d) {
-		if len(ws.Sessions) == 0 {
-			if tmuxSessionExists(ws.TmuxID) {
-				exec.Command("tmux", "kill-session", "-t", ws.TmuxID).Run()
-			}
-			db.DeleteWorkstream(d, ws.WorkstreamID)
 		}
 	}
 }
