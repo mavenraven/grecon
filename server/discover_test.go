@@ -3,6 +3,8 @@ package server
 import (
 	"testing"
 	"time"
+
+	"github.com/spf13/afero"
 )
 
 // --- determineStatus ---
@@ -159,6 +161,100 @@ func TestBuildLiveMap_SkipsUnmatchedPIDs(t *testing.T) {
 	m := buildLiveMapFromPanes(claudePanes, pidMap)
 	if len(m) != 0 {
 		t.Fatalf("unmatched PIDs should not appear in map, got %d entries", len(m))
+	}
+}
+
+// --- processPaneLines ---
+
+func TestProcessPaneLines_FindsClaudeProcess(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	home := "/fakehome"
+	afero.WriteFile(fs, home+"/.claude/sessions/100.json", []byte(`{}`), 0o644)
+
+	output := "100|||my-session|||claude|||/home/user|||0|||0"
+	children := map[int][]int{}
+
+	panes, names := processPaneLines(fs, home, output, children)
+
+	if len(panes) != 1 {
+		t.Fatalf("expected 1 pane, got %d", len(panes))
+	}
+	if panes[0][0] != "100" {
+		t.Fatalf("expected PID 100, got %s", panes[0][0])
+	}
+	if panes[0][1] != "my-session" {
+		t.Fatalf("expected session my-session, got %s", panes[0][1])
+	}
+	if len(names) != 1 || names[0] != "my-session" {
+		t.Fatalf("expected session name my-session, got %v", names)
+	}
+}
+
+func TestProcessPaneLines_FindsClaudeViaChildPID(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	home := "/fakehome"
+	afero.WriteFile(fs, home+"/.claude/sessions/200.json", []byte(`{}`), 0o644)
+
+	output := "100|||my-session|||zsh|||/home/user|||0|||0"
+	children := map[int][]int{100: {200}}
+
+	panes, _ := processPaneLines(fs, home, output, children)
+
+	if len(panes) != 1 {
+		t.Fatalf("expected 1 pane via child, got %d", len(panes))
+	}
+	if panes[0][0] != "200" {
+		t.Fatalf("expected child PID 200, got %s", panes[0][0])
+	}
+}
+
+func TestProcessPaneLines_SkipsNonClaude(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	home := "/fakehome"
+
+	output := "100|||my-session|||vim|||/home/user|||0|||0"
+	children := map[int][]int{}
+
+	panes, _ := processPaneLines(fs, home, output, children)
+
+	if len(panes) != 0 {
+		t.Fatalf("vim should not be detected as claude, got %d panes", len(panes))
+	}
+}
+
+func TestProcessPaneLines_EmptyOutput(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	panes, names := processPaneLines(fs, "/fakehome", "", map[int][]int{})
+	if len(panes) != 0 || len(names) != 0 {
+		t.Fatal("empty output should return nothing")
+	}
+}
+
+func TestProcessPaneLines_MalformedLine(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	panes, _ := processPaneLines(fs, "/fakehome", "not|||enough|||parts", map[int][]int{})
+	if len(panes) != 0 {
+		t.Fatal("malformed line should be skipped")
+	}
+}
+
+func TestProcessPaneLines_CollectsAllSessionNames(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	home := "/fakehome"
+
+	output := "100|||session-a|||vim|||/tmp|||0|||0\n200|||session-b|||vim|||/tmp|||0|||0\n300|||session-a|||vim|||/tmp|||0|||1"
+	panes, names := processPaneLines(fs, home, output, map[int][]int{})
+
+	_ = panes
+	nameSet := make(map[string]bool)
+	for _, n := range names {
+		nameSet[n] = true
+	}
+	if !nameSet["session-a"] || !nameSet["session-b"] {
+		t.Fatalf("should collect all unique session names, got %v", names)
+	}
+	if len(nameSet) != 2 {
+		t.Fatalf("should deduplicate, got %d unique names", len(nameSet))
 	}
 }
 

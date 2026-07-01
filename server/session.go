@@ -888,7 +888,7 @@ func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session 
 		return nil
 	}
 	claudeDir := filepath.Join(home, ".claude", "projects")
-	if _, err := os.Stat(claudeDir); err != nil {
+	if _, err := fs.Stat(claudeDir); err != nil {
 		return nil
 	}
 
@@ -916,7 +916,7 @@ func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session 
 	}()
 	wgA.Wait()
 
-	claudePanes, sessionNames := processPaneLines(paneLines, pt.children)
+	claudePanes, sessionNames := processPaneLines(fs, home, paneLines, pt.children)
 	liveMap := buildLiveMapFromPanes(claudePanes, pidSessionMap)
 
 	var claudeTargets []string
@@ -940,7 +940,7 @@ func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session 
 	wgB.Wait()
 
 	candidates := make(map[string][2]string)
-	entries, err := os.ReadDir(claudeDir)
+	entries, err := afero.ReadDir(fs, claudeDir)
 	if err != nil {
 		return nil
 	}
@@ -949,7 +949,7 @@ func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session 
 			continue
 		}
 		projectDir := filepath.Join(claudeDir, entry.Name())
-		files, err := os.ReadDir(projectDir)
+		files, err := afero.ReadDir(fs, projectDir)
 		if err != nil {
 			continue
 		}
@@ -963,8 +963,8 @@ func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session 
 			}
 			path := filepath.Join(projectDir, file.Name())
 			if existing, ok := candidates[sessionID]; ok {
-				existingInfo, _ := os.Stat(existing[0])
-				newInfo, _ := os.Stat(path)
+				existingInfo, _ := fs.Stat(existing[0])
+				newInfo, _ := fs.Stat(path)
 				if existingInfo != nil && newInfo != nil && newInfo.Size() <= existingInfo.Size() {
 					continue
 				}
@@ -1390,8 +1390,7 @@ func pruneStaleBgTasks(tasks []*BackgroundTask) []*BackgroundTask {
 	return kept
 }
 
-func processPaneLines(paneOutput string, childrenMap map[int][]int) (claudePanes [][4]string, sessionNames []string) {
-	home, _ := os.UserHomeDir()
+func processPaneLines(fs afero.Fs, home string, paneOutput string, childrenMap map[int][]int) (claudePanes [][4]string, sessionNames []string) {
 	sessionsDir := filepath.Join(home, ".claude", "sessions")
 	nameSet := make(map[string]bool)
 
@@ -1420,10 +1419,10 @@ func processPaneLines(paneOutput string, childrenMap map[int][]int) (claudePanes
 			command == "claude" || command == "claude.exe" || command == "node"
 
 		checkPID := func(p int) int {
-			if fileExists(filepath.Join(sessionsDir, fmt.Sprintf("%d.json", p))) {
+			if fileExistsFS(fs, filepath.Join(sessionsDir, fmt.Sprintf("%d.json", p))) {
 				return p
 			}
-			return findClaudeChildPID(p, sessionsDir, childrenMap)
+			return findClaudeChildPID(fs, p, sessionsDir, childrenMap)
 		}
 
 		paneTarget := fmt.Sprintf("%s:%s.%s", sessionName, windowIdx, paneIdx)
@@ -1435,7 +1434,7 @@ func processPaneLines(paneOutput string, childrenMap map[int][]int) (claudePanes
 				})
 			}
 		} else if command == "bash" || command == "sh" || command == "zsh" {
-			if cpid := findClaudeChildPID(pid, sessionsDir, childrenMap); cpid > 0 {
+			if cpid := findClaudeChildPID(fs, pid, sessionsDir, childrenMap); cpid > 0 {
 				claudePanes = append(claudePanes, [4]string{
 					strconv.Itoa(cpid), sessionName, paneTarget, panePath,
 				})
@@ -1529,14 +1528,14 @@ func readEnvForSessions(sessionNames []string) map[string]map[string]string {
 	return m
 }
 
-func findClaudeChildPID(parentPID int, sessionsDir string, childrenMap map[int][]int) int {
+func findClaudeChildPID(fs afero.Fs, parentPID int, sessionsDir string, childrenMap map[int][]int) int {
 	queue := []int{parentPID}
 	for len(queue) > 0 {
 		pid := queue[0]
 		queue = queue[1:]
 		if kids, ok := childrenMap[pid]; ok {
 			for _, child := range kids {
-				if fileExists(filepath.Join(sessionsDir, fmt.Sprintf("%d.json", child))) {
+				if fileExistsFS(fs, filepath.Join(sessionsDir, fmt.Sprintf("%d.json", child))) {
 					return child
 				}
 				queue = append(queue, child)
@@ -1785,5 +1784,10 @@ func FindSessionCWDFS(fs afero.Fs, home, sessionID string) string {
 
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
+	return err == nil
+}
+
+func fileExistsFS(fs afero.Fs, path string) bool {
+	_, err := fs.Stat(path)
 	return err == nil
 }
