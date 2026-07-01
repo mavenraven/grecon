@@ -300,6 +300,11 @@ func SoftDeletedSessionIDs(d *sql.DB) []string {
 	return ids
 }
 
+func SetClaudeName(d *sql.DB, sessionID, name string) {
+	d.Exec(`UPDATE claude_sessions SET display_name = ? WHERE session_id = ? AND deleted_at = ''`,
+		name, sessionID)
+}
+
 func SetSessionActive(d *sql.DB, sessionID string, active bool) {
 	val := 0
 	if active {

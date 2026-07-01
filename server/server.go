@@ -363,14 +363,17 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 			}
 		}
 
-		// Mark active sessions that are no longer live
 		for _, cs := range ws.Sessions {
 			if cs.Active && (liveIDs == nil || !liveIDs[cs.SessionID]) {
 				db.SetSessionActive(d, cs.SessionID, false)
 			}
-			// Mark live sessions as active
 			if !cs.Active && liveIDs != nil && liveIDs[cs.SessionID] {
 				db.SetSessionActive(d, cs.SessionID, true)
+			}
+			if cs.DisplayName == "" {
+				if name := readAgentNameFromJSONL(cs.SessionID); name != "" {
+					db.SetClaudeName(d, cs.SessionID, name)
+				}
 			}
 		}
 	}
