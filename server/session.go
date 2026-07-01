@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"grecon/db"
 )
 
 const maxLineBytes = 10 * 1024 * 1024
@@ -1012,7 +1011,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			status := debounceStatus(sessionID, rawStatus)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 			subagents := discoverSubagents(path)
-			claudeName := loadClaudeNameDB(sessionID)
+			claudeName := loadClaudeName(sessionID)
 
 			results[idx] = &Session{
 				SessionID:         sessionID,
@@ -1115,7 +1114,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				status := debounceStatus(sessionID, rawStatus)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 				subagents := discoverSubagents(resolvedPath)
-				claudeName := loadClaudeNameDB(sessionID)
+				claudeName := loadClaudeName(sessionID)
 
 				unmatchedResults[idx] = &Session{
 					SessionID:         sessionID,
@@ -1146,7 +1145,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			} else {
 				projName, relDir, branch := gitProjectInfo(live.paneCWD)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
-				claudeName := loadClaudeNameDB(sessionID)
+				claudeName := loadClaudeName(sessionID)
 
 				unmatchedResults[idx] = &Session{
 					SessionID:   sessionID,
@@ -1645,12 +1644,8 @@ func discoverSubagents(jsonlPath string) []*Subagent {
 	return subagents
 }
 
-func loadClaudeNameDB(sessionID string) string {
-	d := db.Get()
-	if d == nil {
-		return ""
-	}
-	return db.LoadClaudeNameDB(d, sessionID)
+func loadClaudeName(sessionID string) string {
+	return readAgentNameFromJSONL(sessionID)
 }
 
 func readTmuxTagsFrom(env map[string]map[string]string, sessionName string) map[string]string {

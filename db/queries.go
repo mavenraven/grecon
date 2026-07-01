@@ -22,9 +22,8 @@ type WorkstreamInfo struct {
 }
 
 type ClaudeSessionInfo struct {
-	SessionID   string
-	DisplayName string
-	Active      bool
+	SessionID string
+	Active    bool
 }
 
 func now() string {
@@ -84,7 +83,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	for i := range workstreams {
 		ws := &workstreams[i]
 		crows, err := d.Query(`
-			SELECT session_id, display_name, active FROM claude_sessions
+			SELECT session_id, active FROM claude_sessions
 			WHERE workstream_id = ? AND deleted_at = ''
 		`, ws.WorkstreamID)
 		if err != nil {
@@ -93,7 +92,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 		for crows.Next() {
 			var cs ClaudeSessionInfo
 			var activeVal int
-			crows.Scan(&cs.SessionID, &cs.DisplayName, &activeVal)
+			crows.Scan(&cs.SessionID, &activeVal)
 			cs.Active = activeVal == 1
 			ws.Sessions = append(ws.Sessions, cs)
 		}
@@ -259,12 +258,6 @@ func LoadTmuxNameDB(d *sql.DB, sessionID string) string {
 	return name
 }
 
-func LoadClaudeNameDB(d *sql.DB, sessionID string) string {
-	var name string
-	d.QueryRow(`SELECT display_name FROM claude_sessions WHERE session_id = ? AND deleted_at = ''`,
-		sessionID).Scan(&name)
-	return name
-}
 
 func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 	d.Exec(
@@ -300,11 +293,6 @@ func SoftDeletedSessionIDs(d *sql.DB) []string {
 	return ids
 }
 
-func SetClaudeName(d *sql.DB, sessionID, name string) {
-	d.Exec(`UPDATE claude_sessions SET display_name = ? WHERE session_id = ? AND deleted_at = ''`,
-		name, sessionID)
-}
-
 func SetSessionActive(d *sql.DB, sessionID string, active bool) {
 	val := 0
 	if active {
@@ -320,10 +308,10 @@ func LoadSummaryDB(d *sql.DB, sessionID string) string {
 	return summary
 }
 
-func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID, claudeName string) {
+func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID string) {
 	d.Exec(
-		`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, display_name, created_at) VALUES (?, ?, ?, ?)`,
-		workstreamID, sessionID, claudeName, now(),
+		`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, created_at) VALUES (?, ?, ?)`,
+		workstreamID, sessionID, now(),
 	)
 }
 
@@ -335,24 +323,3 @@ func UpdateSessionID(d *sql.DB, workstreamID int64, sessionID string) {
 	)
 }
 
-func AllWorkstreamDisplayNames(d *sql.DB) map[string]string {
-	result := make(map[string]string)
-	rows, err := d.Query(`
-		SELECT t.tmux_id, c.display_name
-		FROM tmux_sessions t
-		JOIN claude_sessions c ON c.workstream_id = t.workstream_id
-		WHERE c.display_name != '' AND c.deleted_at = '' AND t.deleted_at = ''
-	`)
-	if err != nil {
-		return result
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var tmuxID, claudeName string
-		rows.Scan(&tmuxID, &claudeName)
-		if _, exists := result[tmuxID]; !exists {
-			result[tmuxID] = claudeName
-		}
-	}
-	return result
-}

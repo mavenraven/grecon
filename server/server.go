@@ -324,7 +324,7 @@ func seedFromDB(d *sql.DB) []*Session {
 			sessions = append(sessions, &Session{
 				SessionID:   cs.SessionID,
 				TmuxSession: ws.TmuxID,
-				ClaudeName:  cs.DisplayName,
+				ClaudeName:  readAgentNameFromJSONL(cs.SessionID),
 				Summary:     db.LoadSummaryDB(d, cs.SessionID),
 				Status:      status,
 			})
@@ -357,8 +357,7 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 			}
 			for sid := range liveIDs {
 				if !knownIDs[sid] {
-					name := readAgentNameFromJSONL(sid)
-					db.AddClaudeSession(d, ws.WorkstreamID, sid, name)
+					db.AddClaudeSession(d, ws.WorkstreamID, sid)
 				}
 			}
 		}
@@ -369,11 +368,6 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 			}
 			if !cs.Active && liveIDs != nil && liveIDs[cs.SessionID] {
 				db.SetSessionActive(d, cs.SessionID, true)
-			}
-			if cs.DisplayName == "" {
-				if name := readAgentNameFromJSONL(cs.SessionID); name != "" {
-					db.SetClaudeName(d, cs.SessionID, name)
-				}
 			}
 		}
 	}
@@ -397,7 +391,7 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 				SessionID:       cs.SessionID,
 				TmuxSession:     ws.TmuxID,
 				TmuxDisplayName: ws.DisplayName,
-				ClaudeName:      cs.DisplayName,
+				ClaudeName:      readAgentNameFromJSONL(cs.SessionID),
 				Summary:         db.LoadSummaryDB(d, cs.SessionID),
 				Status:          status,
 			})

@@ -46,6 +46,8 @@ var migrations = []string{
 	ALTER TABLE claude_sessions ADD COLUMN deleted_at TEXT NOT NULL DEFAULT '';`,
 
 	`ALTER TABLE workstreams DROP COLUMN active;`,
+
+	`ALTER TABLE claude_sessions DROP COLUMN display_name;`,
 }
 
 func migrate(d *sql.DB) error {
