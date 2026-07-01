@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"grecon/db"
+
+	"github.com/spf13/afero"
 )
 
 const (
@@ -97,7 +99,11 @@ type toolInput struct {
 }
 
 func extractRecentActivity(path string) string {
-	f, err := os.Open(path)
+	return extractRecentActivityFS(afero.NewOsFs(), path)
+}
+
+func extractRecentActivityFS(fs afero.Fs, path string) string {
+	f, err := fs.Open(path)
 	if err != nil {
 		return ""
 	}
