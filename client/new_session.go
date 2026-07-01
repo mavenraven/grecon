@@ -26,6 +26,7 @@ type newSessionModel struct {
 	cursorPos  int
 	active     field
 	result     *string
+	err        error
 	width      int
 	height     int
 }
@@ -74,6 +75,7 @@ func (m *newSessionModel) submit() {
 	}
 	name, err := CreateSession(strings.TrimSpace(m.name), cwd, strings.TrimSpace(m.claudeName), nil, nil, m.worktree)
 	if err != nil {
+		m.err = err
 		empty := ""
 		m.result = &empty
 	} else {
@@ -289,7 +291,7 @@ func (m newSessionModel) View() string {
 	return b.String()
 }
 
-func RunNewSessionForm(initialName string) (string, bool) {
+func RunNewSessionForm(initialName string) (string, error) {
 	m := newNewSessionModel()
 	if initialName != "" {
 		m.name = initialName
@@ -298,11 +300,14 @@ func RunNewSessionForm(initialName string) (string, bool) {
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	result, err := p.Run()
 	if err != nil {
-		return "", false
+		return "", err
 	}
 	rm := result.(newSessionModel)
-	if rm.result != nil && *rm.result != "" {
-		return *rm.result, true
+	if rm.err != nil {
+		return "", rm.err
 	}
-	return "", false
+	if rm.result != nil && *rm.result != "" {
+		return *rm.result, nil
+	}
+	return "", nil
 }

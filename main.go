@@ -49,8 +49,11 @@ func main() {
 			if len(args) > 0 {
 				initialName = args[0]
 			}
-			name, ok := client.RunNewSessionForm(initialName)
-			if ok && name != "" {
+			name, err := client.RunNewSessionForm(initialName)
+			if err != nil {
+				return err
+			}
+			if name != "" {
 				client.SwitchToPane(name)
 			}
 			return nil
