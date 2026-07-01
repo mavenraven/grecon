@@ -32,9 +32,10 @@ var (
 type tickMsg struct{}
 
 type tuiModel struct {
-	app    *App
-	width  int
-	height int
+	app       *App
+	width     int
+	height    int
+	newForm   *newSessionModel
 }
 
 func newTUIModel() (tuiModel, error) {
@@ -55,6 +56,35 @@ func tickCmd() tea.Cmd {
 }
 
 func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.newForm != nil {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.newForm.width = msg.Width
+			m.newForm.height = msg.Height
+			return m, nil
+		case tea.KeyMsg:
+			updated, cmd := m.newForm.Update(msg)
+			form := updated.(newSessionModel)
+			m.newForm = &form
+			if form.result != nil {
+				if *form.result != "" {
+					m.app.SwitchTarget = *form.result
+					m.app.ShouldQuit = true
+					return m, tea.Quit
+				}
+				if form.err != nil {
+					m.app.ExitError = form.err.Error()
+					m.app.ShouldQuit = true
+					return m, tea.Quit
+				}
+				m.newForm = nil
+				return m, nil
+			}
+			return m, cmd
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -69,6 +99,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		m.app.PageSize = m.height - 4
 		code, ctrl := translateKey(msg)
+		if code == "n" && !ctrl && !m.app.FilterActive {
+			form := newNewSessionModel()
+			form.width = m.width
+			form.height = m.height
+			m.newForm = &form
+			return m, nil
+		}
 		m.app.HandleKey(code, ctrl)
 		if m.app.ShouldQuit {
 			return m, tea.Quit
@@ -123,6 +160,10 @@ func translateKey(msg tea.KeyMsg) (string, bool) {
 }
 
 func (m tuiModel) View() string {
+	if m.newForm != nil {
+		return m.newForm.View()
+	}
+
 	var b strings.Builder
 
 	showSearch := m.app.FilterActive || m.app.FilterText != ""
