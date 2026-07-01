@@ -443,11 +443,14 @@ func TestIntegration_FooterShowsNewKey(t *testing.T) {
 func TestIntegration_NoGhostAfterTmuxKillAndReactivate(t *testing.T) {
 	instance := fmt.Sprintf("integration-test-%d", time.Now().UnixNano())
 	db.SetInstance(instance)
+	testDBPath := db.Path()
+	testSocketPath := server.SocketPath()
+	testCmdSocketPath := server.CommandSocketPath()
 	defer func() {
+		os.Remove(testDBPath)
+		os.Remove(testSocketPath)
+		os.Remove(testCmdSocketPath)
 		db.SetInstance("grecon")
-		os.Remove(db.Path())
-		os.Remove(server.SocketPath())
-		os.Remove(server.CommandSocketPath())
 	}()
 
 	home, _ := os.UserHomeDir()
