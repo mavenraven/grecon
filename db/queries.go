@@ -1,10 +1,13 @@
 package db
 
 import (
+	"bufio"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -22,14 +25,18 @@ type ClaudeSessionInfo struct {
 	Active      bool
 }
 
+func now() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
 func CreateWorkstreamDB(d *sql.DB, tmuxSession string) error {
 	tx, err := d.Begin()
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
-	result, err := tx.Exec(`INSERT INTO workstreams (created_at) VALUES (?)`, now)
+	ts := now()
+	result, err := tx.Exec(`INSERT INTO workstreams (created_at) VALUES (?)`, ts)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("insert workstream: %w", err)
@@ -39,7 +46,7 @@ func CreateWorkstreamDB(d *sql.DB, tmuxSession string) error {
 	tmuxID := "ws-" + tmuxSession
 	_, err = tx.Exec(
 		`INSERT INTO tmux_sessions (workstream_id, tmux_id, display_name, created_at) VALUES (?, ?, ?, ?)`,
-		wsID, tmuxID, tmuxSession, now,
+		wsID, tmuxID, tmuxSession, ts,
 	)
 	if err != nil {
 		tx.Rollback()
@@ -54,6 +61,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 		SELECT w.id, t.tmux_id, t.display_name, COALESCE(w.created_at, '')
 		FROM workstreams w
 		JOIN tmux_sessions t ON t.workstream_id = w.id
+		WHERE w.deleted_at = '' AND t.deleted_at = ''
 		ORDER BY w.id
 	`)
 	if err != nil {
@@ -72,7 +80,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 		ws := &workstreams[i]
 		crows, err := d.Query(`
 			SELECT session_id, display_name, active FROM claude_sessions
-			WHERE workstream_id = ?
+			WHERE workstream_id = ? AND deleted_at = ''
 		`, ws.WorkstreamID)
 		if err != nil {
 			continue
@@ -91,7 +99,9 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 }
 
 func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
-	rows, err := d.Query(`SELECT id, session_id, workstream_id FROM claude_sessions`)
+	ts := now()
+
+	rows, err := d.Query(`SELECT id, session_id, workstream_id FROM claude_sessions WHERE deleted_at = ''`)
 	if err != nil {
 		return
 	}
@@ -111,12 +121,14 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 
 	for _, c := range candidates {
 		if c.sessionID == "" || !jsonlExists(c.sessionID) {
-			d.Exec(`DELETE FROM claude_sessions WHERE id = ?`, c.id)
+			d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE id = ?`, ts, c.id)
+		} else if worktreeGone(c.sessionID) {
+			d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE id = ?`, ts, c.id)
 		}
 	}
 
 	liveWSIDs := make(map[int64]bool)
-	tmuxRows, err := d.Query(`SELECT workstream_id, display_name FROM tmux_sessions`)
+	tmuxRows, err := d.Query(`SELECT workstream_id, display_name FROM tmux_sessions WHERE deleted_at = ''`)
 	if err == nil {
 		for tmuxRows.Next() {
 			var wsID int64
@@ -137,14 +149,9 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 		if ws.CreatedAt > cutoff {
 			continue
 		}
-		hasSession := false
-		for range ws.Sessions {
-			hasSession = true
-			break
-		}
-		if !hasSession {
-			d.Exec(`DELETE FROM tmux_sessions WHERE workstream_id = ?`, ws.WorkstreamID)
-			d.Exec(`DELETE FROM workstreams WHERE id = ?`, ws.WorkstreamID)
+		if len(ws.Sessions) == 0 {
+			d.Exec(`UPDATE tmux_sessions SET deleted_at = ? WHERE workstream_id = ? AND deleted_at = ''`, ts, ws.WorkstreamID)
+			d.Exec(`UPDATE workstreams SET deleted_at = ? WHERE id = ? AND deleted_at = ''`, ts, ws.WorkstreamID)
 		}
 	}
 }
@@ -168,34 +175,95 @@ func jsonlExists(sessionID string) bool {
 	return false
 }
 
+func worktreeGone(sessionID string) bool {
+	path := findJSONLPath(sessionID)
+	if path == "" {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	var lastWorktreePath string
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.Contains(line, `"worktree-state"`) {
+			continue
+		}
+		var entry struct {
+			Type             string `json:"type"`
+			WorktreeSession  *struct {
+				WorktreePath string `json:"worktreePath"`
+			} `json:"worktreeSession"`
+		}
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Type == "worktree-state" {
+			if entry.WorktreeSession == nil {
+				lastWorktreePath = ""
+			} else {
+				lastWorktreePath = entry.WorktreeSession.WorktreePath
+			}
+		}
+	}
+
+	if lastWorktreePath == "" {
+		return false
+	}
+	_, err = os.Stat(lastWorktreePath)
+	return err != nil
+}
+
+func findJSONLPath(sessionID string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	projectsDir := filepath.Join(home, ".claude", "projects")
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		path := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
 func LoadTmuxNameDB(d *sql.DB, sessionID string) string {
 	var name string
 	d.QueryRow(`
 		SELECT t.display_name FROM tmux_sessions t
 		JOIN claude_sessions c ON c.workstream_id = t.workstream_id
-		WHERE c.session_id = ?
+		WHERE c.session_id = ? AND c.deleted_at = '' AND t.deleted_at = ''
 	`, sessionID).Scan(&name)
 	return name
 }
 
 func LoadClaudeNameDB(d *sql.DB, sessionID string) string {
 	var name string
-	d.QueryRow(`SELECT display_name FROM claude_sessions WHERE session_id = ?`,
+	d.QueryRow(`SELECT display_name FROM claude_sessions WHERE session_id = ? AND deleted_at = ''`,
 		sessionID).Scan(&name)
 	return name
 }
 
 func SaveSummaryDB(d *sql.DB, sessionID, summary string) {
 	d.Exec(
-		`UPDATE claude_sessions SET summary = ? WHERE session_id = ?`,
+		`UPDATE claude_sessions SET summary = ? WHERE session_id = ? AND deleted_at = ''`,
 		summary, sessionID,
 	)
 }
 
 func DeleteWorkstream(d *sql.DB, wsID int64) {
-	d.Exec(`DELETE FROM claude_sessions WHERE workstream_id = ?`, wsID)
-	d.Exec(`DELETE FROM tmux_sessions WHERE workstream_id = ?`, wsID)
-	d.Exec(`DELETE FROM workstreams WHERE id = ?`, wsID)
+	ts := now()
+	d.Exec(`UPDATE claude_sessions SET deleted_at = ? WHERE workstream_id = ? AND deleted_at = ''`, ts, wsID)
+	d.Exec(`UPDATE tmux_sessions SET deleted_at = ? WHERE workstream_id = ? AND deleted_at = ''`, ts, wsID)
+	d.Exec(`UPDATE workstreams SET deleted_at = ? WHERE id = ? AND deleted_at = ''`, ts, wsID)
 }
 
 func SetSessionActive(d *sql.DB, sessionID string, active bool) {
@@ -203,12 +271,12 @@ func SetSessionActive(d *sql.DB, sessionID string, active bool) {
 	if active {
 		val = 1
 	}
-	d.Exec(`UPDATE claude_sessions SET active = ? WHERE session_id = ?`, val, sessionID)
+	d.Exec(`UPDATE claude_sessions SET active = ? WHERE session_id = ? AND deleted_at = ''`, val, sessionID)
 }
 
 func LoadSummaryDB(d *sql.DB, sessionID string) string {
 	var summary string
-	d.QueryRow(`SELECT summary FROM claude_sessions WHERE session_id = ?`,
+	d.QueryRow(`SELECT summary FROM claude_sessions WHERE session_id = ? AND deleted_at = ''`,
 		sessionID).Scan(&summary)
 	return summary
 }
@@ -216,27 +284,25 @@ func LoadSummaryDB(d *sql.DB, sessionID string) string {
 func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID, claudeName string) {
 	d.Exec(
 		`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, display_name, created_at) VALUES (?, ?, ?, ?)`,
-		workstreamID, sessionID, claudeName, time.Now().UTC().Format(time.RFC3339),
+		workstreamID, sessionID, claudeName, now(),
 	)
 }
 
-// LoadClaudeNameForTmuxSession returns the claude name for any session in the given tmux session's workstream.
 func LoadClaudeNameForTmuxSession(d *sql.DB, tmuxSession string) string {
 	tmuxID := "ws-" + tmuxSession
 	var name string
 	d.QueryRow(`
 		SELECT c.display_name FROM claude_sessions c
 		JOIN tmux_sessions t ON t.workstream_id = c.workstream_id
-		WHERE t.tmux_id = ? AND c.display_name != ''
+		WHERE t.tmux_id = ? AND c.display_name != '' AND c.deleted_at = '' AND t.deleted_at = ''
 		LIMIT 1
 	`, tmuxID).Scan(&name)
 	return name
 }
 
-// UpdateSessionID updates the session_id for a claude_session that has an empty session_id in the given workstream.
 func UpdateSessionID(d *sql.DB, workstreamID int64, sessionID string) {
 	d.Exec(
-		`UPDATE claude_sessions SET session_id = ? WHERE workstream_id = ? AND session_id = '' LIMIT 1`,
+		`UPDATE claude_sessions SET session_id = ? WHERE workstream_id = ? AND session_id = '' AND deleted_at = '' LIMIT 1`,
 		sessionID, workstreamID,
 	)
 }
@@ -247,7 +313,7 @@ func AllWorkstreamDisplayNames(d *sql.DB) map[string]string {
 		SELECT t.display_name, c.display_name
 		FROM tmux_sessions t
 		JOIN claude_sessions c ON c.workstream_id = t.workstream_id
-		WHERE c.display_name != ''
+		WHERE c.display_name != '' AND c.deleted_at = '' AND t.deleted_at = ''
 	`)
 	if err != nil {
 		return result
