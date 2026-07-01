@@ -178,7 +178,7 @@ func runServer(env *Env) {
 			case <-discoverTicker.C:
 				pollCount++
 				pollStart := time.Now()
-				sessions = discoverTmuxSessions(prev)
+				sessions = discoverTmuxSessions(env, prev)
 				pollMs := time.Since(pollStart).Milliseconds()
 
 				sessions = reconcileDBWithLive(env, d, sessions)
@@ -470,7 +470,7 @@ func homeDir() string {
 	return h
 }
 
-func discoverTmuxSessions(prev map[string]*Session) []*Session {
+func discoverTmuxSessions(env *Env, prev map[string]*Session) []*Session {
 	d := db.Get()
 	knownTmux := make(map[string]bool)
 	if d != nil {
@@ -479,7 +479,7 @@ func discoverTmuxSessions(prev map[string]*Session) []*Session {
 		}
 	}
 
-	all := DiscoverSessions(prev)
+	all := DiscoverSessions(env.Fs, prev)
 	var sessions []*Session
 	for _, s := range all {
 		if s.TmuxSession != "" && knownTmux[s.TmuxSession] {

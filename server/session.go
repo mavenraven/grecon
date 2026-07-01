@@ -432,8 +432,8 @@ type usageEntry struct {
 	CacheReadInputTokens     uint64 `json:"cache_read_input_tokens"`
 }
 
-func parseJSONL(path string, prevFileSize, prevInput, prevOutput uint64, prevModel, prevEffort, prevActivity string, prevWakeup *Wakeup, prevBgTasks []*BackgroundTask, prevPending map[string]*BackgroundTask) parsedInfo {
-	f, err := os.Open(path)
+func parseJSONL(fs afero.Fs, path string, prevFileSize, prevInput, prevOutput uint64, prevModel, prevEffort, prevActivity string, prevWakeup *Wakeup, prevBgTasks []*BackgroundTask, prevPending map[string]*BackgroundTask) parsedInfo {
+	f, err := fs.Open(path)
 	if err != nil {
 		return parsedInfo{
 			inputTokens: prevInput, outputTokens: prevOutput,
@@ -882,7 +882,7 @@ func stripANSI(s string) string {
 
 // --- Session discovery ---
 
-func DiscoverSessions(prevSessions map[string]*Session) []*Session {
+func DiscoverSessions(fs afero.Fs, prevSessions map[string]*Session) []*Session {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
@@ -1004,7 +1004,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				prevPending = prev.PendingBgCalls
 			}
 
-			info := parseJSONL(path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks, prevPending)
+			info := parseJSONL(fs, path, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks, prevPending)
 			markBgTaskLiveness(info.backgroundTasks, live.pid, pt)
 			info.backgroundTasks = pruneStaleBgTasks(info.backgroundTasks)
 			cwd := info.cwd
@@ -1111,7 +1111,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					prevPending = prev.PendingBgCalls
 				}
 
-				info := parseJSONL(resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks, prevPending)
+				info := parseJSONL(fs, resolvedPath, prevSize, prevIn, prevOut, prevModel, prevEffort, prevAct, prevWakeup, prevBgTasks, prevPending)
 				markBgTaskLiveness(info.backgroundTasks, live.pid, pt)
 			info.backgroundTasks = pruneStaleBgTasks(info.backgroundTasks)
 				cwd := info.cwd
