@@ -170,8 +170,8 @@ func TestHandleReactivateSession_BadCWD(t *testing.T) {
 	if resp.OK {
 		t.Fatal("should fail with bad cwd when JSONL doesn't exist")
 	}
-	if resp.Error != "bad cwd" {
-		t.Fatalf("expected 'bad cwd', got '%s'", resp.Error)
+	if resp.Error != "session no longer exists" {
+		t.Fatalf("expected 'session no longer exists', got '%s'", resp.Error)
 	}
 }
 

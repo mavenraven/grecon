@@ -210,6 +210,10 @@ func handleReactivateSession(cmd Command) CommandResponse {
 		return CommandResponse{OK: false, Error: "no database"}
 	}
 
+	if !jsonlExistsForSession(cmd.SessionID) {
+		return CommandResponse{OK: false, Error: "session no longer exists"}
+	}
+
 	db.SetSessionActive(d, cmd.SessionID, true)
 
 	tmuxSession := cmd.TmuxSession
