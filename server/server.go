@@ -17,8 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"os/exec"
-
 	"grecon/db"
 
 	"github.com/spf13/afero"
@@ -184,7 +182,7 @@ func runServer(env *Env) {
 				pollMs := time.Since(pollStart).Milliseconds()
 
 				sessions = reconcileDBWithLive(env, d, sessions)
-				cleanupSoftDeleted(d, sessions)
+				cleanupSoftDeleted(env, d, sessions)
 
 				prev = make(map[string]*Session)
 				for _, s := range sessions {
@@ -391,7 +389,7 @@ func reconcileDBWithLive(env *Env, d *sql.DB, liveSessions []*Session) []*Sessio
 				continue
 			}
 			status := StatusInactive
-			if cs.SessionID != "" && !jsonlExistsForSession(cs.SessionID) {
+			if cs.SessionID != "" && !jsonlExistsForSessionFS(env.Fs, env.Home, cs.SessionID) {
 				status = StatusDeleted
 			}
 			liveSessions = append(liveSessions, &Session{
@@ -414,7 +412,7 @@ func reconcileDBWithLive(env *Env, d *sql.DB, liveSessions []*Session) []*Sessio
 	return liveSessions
 }
 
-func cleanupSoftDeleted(d *sql.DB, liveSessions []*Session) {
+func cleanupSoftDeleted(env *Env, d *sql.DB, liveSessions []*Session) {
 	deletedIDs := make(map[string]bool)
 	for _, id := range db.SoftDeletedSessionIDs(d) {
 		deletedIDs[id] = true
@@ -422,7 +420,7 @@ func cleanupSoftDeleted(d *sql.DB, liveSessions []*Session) {
 
 	for _, s := range liveSessions {
 		if s.PaneTarget != "" && deletedIDs[s.SessionID] {
-			exec.Command("tmux", "kill-pane", "-t", s.PaneTarget).Run()
+			env.Cmd.Run("tmux", "kill-pane", "-t", s.PaneTarget)
 		}
 	}
 }
@@ -461,6 +459,10 @@ func ReadAgentNameFromJSONL(fs afero.Fs, home, sessionID string) string {
 
 func jsonlExistsForSession(sessionID string) bool {
 	return FindSessionCWD(sessionID) != "" || findJSONLBySessionID(sessionID) != ""
+}
+
+func jsonlExistsForSessionFS(fs afero.Fs, home, sessionID string) bool {
+	return db.FindJSONLPath(fs, home, sessionID) != ""
 }
 
 func homeDir() string {
