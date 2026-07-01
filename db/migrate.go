@@ -30,6 +30,10 @@ var migrations = []string{
 	`ALTER TABLE claude_sessions ADD COLUMN summary TEXT NOT NULL DEFAULT '';`,
 
 	`ALTER TABLE claude_sessions ADD COLUMN active INTEGER NOT NULL DEFAULT 1;`,
+
+	`ALTER TABLE workstreams ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
+	ALTER TABLE tmux_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
+	ALTER TABLE claude_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT '';`,
 }
 
 func migrate(d *sql.DB) error {

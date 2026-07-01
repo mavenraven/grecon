@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type WorkstreamInfo struct {
@@ -12,6 +13,7 @@ type WorkstreamInfo struct {
 	TmuxID       string
 	DisplayName  string
 	Worktree     string
+	CreatedAt    string
 	Sessions     []ClaudeSessionInfo
 }
 
@@ -27,7 +29,8 @@ func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) error {
 		return fmt.Errorf("begin: %w", err)
 	}
 
-	result, err := tx.Exec(`INSERT INTO workstreams (worktree) VALUES (?)`, worktree)
+	now := time.Now().UTC().Format(time.RFC3339)
+	result, err := tx.Exec(`INSERT INTO workstreams (worktree, created_at) VALUES (?, ?)`, worktree, now)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("insert workstream: %w", err)
@@ -36,8 +39,8 @@ func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) error {
 
 	tmuxID := "ws-" + tmuxSession
 	_, err = tx.Exec(
-		`INSERT INTO tmux_sessions (workstream_id, tmux_id, display_name) VALUES (?, ?, ?)`,
-		wsID, tmuxID, tmuxSession,
+		`INSERT INTO tmux_sessions (workstream_id, tmux_id, display_name, created_at) VALUES (?, ?, ?, ?)`,
+		wsID, tmuxID, tmuxSession, now,
 	)
 	if err != nil {
 		tx.Rollback()
@@ -49,7 +52,7 @@ func CreateWorkstreamDB(d *sql.DB, tmuxSession, worktree string) error {
 
 func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	rows, err := d.Query(`
-		SELECT w.id, t.tmux_id, t.display_name, COALESCE(w.worktree, '')
+		SELECT w.id, t.tmux_id, t.display_name, COALESCE(w.worktree, ''), COALESCE(w.created_at, '')
 		FROM workstreams w
 		JOIN tmux_sessions t ON t.workstream_id = w.id
 		ORDER BY w.id
@@ -61,7 +64,7 @@ func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
 	var workstreams []WorkstreamInfo
 	for rows.Next() {
 		var ws WorkstreamInfo
-		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &ws.Worktree)
+		rows.Scan(&ws.WorkstreamID, &ws.TmuxID, &ws.DisplayName, &ws.Worktree, &ws.CreatedAt)
 		workstreams = append(workstreams, ws)
 	}
 	rows.Close()
@@ -127,8 +130,12 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 		tmuxRows.Close()
 	}
 
+	cutoff := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339)
 	for _, ws := range AllWorkstreams(d) {
 		if liveWSIDs[ws.WorkstreamID] {
+			continue
+		}
+		if ws.CreatedAt > cutoff {
 			continue
 		}
 		hasSession := false
@@ -209,8 +216,8 @@ func LoadSummaryDB(d *sql.DB, sessionID string) string {
 
 func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID, claudeName string) {
 	d.Exec(
-		`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, display_name) VALUES (?, ?, ?)`,
-		workstreamID, sessionID, claudeName,
+		`INSERT OR IGNORE INTO claude_sessions (workstream_id, session_id, display_name, created_at) VALUES (?, ?, ?, ?)`,
+		workstreamID, sessionID, claudeName, time.Now().UTC().Format(time.RFC3339),
 	)
 }
 
