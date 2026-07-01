@@ -1077,13 +1077,11 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			defer wg3.Done()
 
 			var resolvedPath string
-			if !strings.HasPrefix(sessionID, "tmux-") {
-				if prev, ok := prevSessions[sessionID]; ok && prev.JSONLPath != "" {
-					resolvedPath = prev.JSONLPath
-				}
-				if resolvedPath == "" {
-					resolvedPath = findJSONLForResumedSession(live.pid)
-				}
+			if prev, ok := prevSessions[sessionID]; ok && prev.JSONLPath != "" {
+				resolvedPath = prev.JSONLPath
+			}
+			if resolvedPath == "" {
+				resolvedPath = findJSONLForResumedSession(live.pid)
 			}
 
 			if resolvedPath != "" {
@@ -1456,12 +1454,6 @@ func buildLiveMapFromPanes(claudePanes [][4]string, pidSessionMap map[int]sessio
 				pid: pid, tmuxSession: tmuxSession,
 				paneTarget: paneTarget, paneCWD: paneCWD,
 				startedAt: info.startedAt,
-			}
-		} else {
-			key := fmt.Sprintf("tmux-%s", paneTarget)
-			m[key] = &liveSessionInfo{
-				pid: pid, tmuxSession: tmuxSession,
-				paneTarget: paneTarget, paneCWD: paneCWD,
 			}
 		}
 	}
