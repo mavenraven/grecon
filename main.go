@@ -124,16 +124,8 @@ func main() {
 		},
 	}
 
-	nameCmd := &cobra.Command{
-		Use:   "name",
-		Short: "Generate a random fun name",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println(client.GenerateFunName())
-		},
-	}
-
 	rootCmd.PersistentFlags().StringVarP(&instanceName, "instance", "i", "", "Instance name (namespaces DB, sockets, lock file)")
-	rootCmd.AddCommand(newCmd, launchCmd, serverCmd, jsonCmd, nameCmd)
+	rootCmd.AddCommand(newCmd, launchCmd, serverCmd, jsonCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
