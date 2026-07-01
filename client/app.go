@@ -111,7 +111,10 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 	seen := make(map[string]int)
 
 	for _, s := range sessions {
-		name := s.TmuxSession
+		name := s.TmuxDisplayName
+		if name == "" {
+			name = s.TmuxSession
+		}
 		if name == "" {
 			name = "—"
 		}

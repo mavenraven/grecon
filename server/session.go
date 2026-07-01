@@ -82,6 +82,7 @@ type Session struct {
 	CWD               string            `json:"cwd"`
 	RelativeDir       string            `json:"relative_dir,omitempty"`
 	TmuxSession       string            `json:"tmux_session,omitempty"`
+	TmuxDisplayName   string            `json:"tmux_display_name,omitempty"`
 	PaneTarget        string            `json:"pane_target,omitempty"`
 	Model             string            `json:"model,omitempty"`
 	Effort            string            `json:"effort,omitempty"`

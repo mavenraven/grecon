@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type WorkstreamInfo struct {
@@ -29,31 +31,34 @@ func now() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
-func CreateWorkstreamDB(d *sql.DB, tmuxSession string) error {
+func CreateWorkstreamDB(d *sql.DB, displayName string) (string, error) {
 	tx, err := d.Begin()
 	if err != nil {
-		return fmt.Errorf("begin: %w", err)
+		return "", fmt.Errorf("begin: %w", err)
 	}
 
 	ts := now()
 	result, err := tx.Exec(`INSERT INTO workstreams (created_at) VALUES (?)`, ts)
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("insert workstream: %w", err)
+		return "", fmt.Errorf("insert workstream: %w", err)
 	}
 	wsID, _ := result.LastInsertId()
 
-	tmuxID := "ws-" + tmuxSession
+	tmuxID := uuid.New().String()
 	_, err = tx.Exec(
 		`INSERT INTO tmux_sessions (workstream_id, tmux_id, display_name, created_at) VALUES (?, ?, ?, ?)`,
-		wsID, tmuxID, tmuxSession, ts,
+		wsID, tmuxID, displayName, ts,
 	)
 	if err != nil {
 		tx.Rollback()
-		return fmt.Errorf("insert tmux_session: %w", err)
+		return "", fmt.Errorf("insert tmux_session: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+	return tmuxID, nil
 }
 
 func AllWorkstreams(d *sql.DB) []WorkstreamInfo {
@@ -128,7 +133,7 @@ func PruneDeadSessions(d *sql.DB, liveTmuxSessions map[string]bool) {
 	}
 
 	liveWSIDs := make(map[int64]bool)
-	tmuxRows, err := d.Query(`SELECT workstream_id, display_name FROM tmux_sessions WHERE deleted_at = ''`)
+	tmuxRows, err := d.Query(`SELECT workstream_id, tmux_id FROM tmux_sessions WHERE deleted_at = ''`)
 	if err == nil {
 		for tmuxRows.Next() {
 			var wsID int64
@@ -243,7 +248,7 @@ func findJSONLPath(sessionID string) string {
 func LoadTmuxNameDB(d *sql.DB, sessionID string) string {
 	var name string
 	d.QueryRow(`
-		SELECT t.display_name FROM tmux_sessions t
+		SELECT t.tmux_id FROM tmux_sessions t
 		JOIN claude_sessions c ON c.workstream_id = t.workstream_id
 		WHERE c.session_id = ? AND c.deleted_at = '' AND t.deleted_at = ''
 	`, sessionID).Scan(&name)
@@ -313,17 +318,6 @@ func AddClaudeSession(d *sql.DB, workstreamID int64, sessionID, claudeName strin
 	)
 }
 
-func LoadClaudeNameForTmuxSession(d *sql.DB, tmuxSession string) string {
-	tmuxID := "ws-" + tmuxSession
-	var name string
-	d.QueryRow(`
-		SELECT c.display_name FROM claude_sessions c
-		JOIN tmux_sessions t ON t.workstream_id = c.workstream_id
-		WHERE t.tmux_id = ? AND c.display_name != '' AND c.deleted_at = '' AND t.deleted_at = ''
-		LIMIT 1
-	`, tmuxID).Scan(&name)
-	return name
-}
 
 func UpdateSessionID(d *sql.DB, workstreamID int64, sessionID string) {
 	d.Exec(
@@ -335,7 +329,7 @@ func UpdateSessionID(d *sql.DB, workstreamID int64, sessionID string) {
 func AllWorkstreamDisplayNames(d *sql.DB) map[string]string {
 	result := make(map[string]string)
 	rows, err := d.Query(`
-		SELECT t.display_name, c.display_name
+		SELECT t.tmux_id, c.display_name
 		FROM tmux_sessions t
 		JOIN claude_sessions c ON c.workstream_id = t.workstream_id
 		WHERE c.display_name != '' AND c.deleted_at = '' AND t.deleted_at = ''
@@ -345,10 +339,10 @@ func AllWorkstreamDisplayNames(d *sql.DB) map[string]string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var tmuxName, claudeName string
-		rows.Scan(&tmuxName, &claudeName)
-		if _, exists := result[tmuxName]; !exists {
-			result[tmuxName] = claudeName
+		var tmuxID, claudeName string
+		rows.Scan(&tmuxID, &claudeName)
+		if _, exists := result[tmuxID]; !exists {
+			result[tmuxID] = claudeName
 		}
 	}
 	return result

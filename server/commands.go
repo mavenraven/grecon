@@ -164,14 +164,14 @@ func handleCreateSession(cmd Command) CommandResponse {
 		return CommandResponse{OK: false, Error: "invalid cwd"}
 	}
 
-	baseName := sanitizeSessionName(cmd.Name)
-	sessionName := uniqueTmuxName(baseName)
+	displayName := sanitizeSessionName(cmd.Name)
 
-	if err := db.CreateWorkstreamDB(d, sessionName); err != nil {
+	tmuxID, err := db.CreateWorkstreamDB(d, displayName)
+	if err != nil {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("create workstream: %v", err)}
 	}
 
-	args := []string{"new-session", "-d", "-s", sessionName, "-c", cmd.CWD}
+	args := []string{"new-session", "-d", "-s", tmuxID, "-c", cmd.CWD}
 
 	if cmd.Tags != "" {
 		args = append(args, "-e", fmt.Sprintf("RECON_TAGS=%s", cmd.Tags))
@@ -196,13 +196,14 @@ func handleCreateSession(cmd Command) CommandResponse {
 		return CommandResponse{OK: false, Error: fmt.Sprintf("tmux: %v", err)}
 	}
 
-	injectClaudeAlias(sessionName)
+	exec.Command("tmux", "set-option", "-t", tmuxID, "@display_name", displayName).Run()
+	injectClaudeAlias(tmuxID)
 
 	if cmd.Worktree {
-		go fixDefaultPath(sessionName)
+		go fixDefaultPath(tmuxID)
 	}
 
-	return CommandResponse{OK: true, TmuxSession: sessionName}
+	return CommandResponse{OK: true, TmuxSession: tmuxID}
 }
 
 func handleReactivateSession(cmd Command) CommandResponse {
@@ -265,18 +266,6 @@ func sanitizeSessionName(name string) string {
 		return "claude"
 	}
 	return result
-}
-
-func uniqueTmuxName(baseName string) string {
-	if !tmuxSessionExists(baseName) {
-		return baseName
-	}
-	for n := 2; ; n++ {
-		candidate := fmt.Sprintf("%s-%d", baseName, n)
-		if !tmuxSessionExists(candidate) {
-			return candidate
-		}
-	}
 }
 
 func injectClaudeAlias(sessionName string) {

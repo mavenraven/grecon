@@ -323,7 +323,7 @@ func seedFromDB(d *sql.DB) []*Session {
 			}
 			sessions = append(sessions, &Session{
 				SessionID:   cs.SessionID,
-				TmuxSession: ws.DisplayName,
+				TmuxSession: ws.TmuxID,
 				ClaudeName:  cs.DisplayName,
 				Summary:     db.LoadSummaryDB(d, cs.SessionID),
 				Status:      status,
@@ -347,7 +347,7 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 
 	workstreams := db.AllWorkstreams(d)
 	for _, ws := range workstreams {
-		liveIDs := liveByTmux[ws.DisplayName]
+		liveIDs := liveByTmux[ws.TmuxID]
 
 		// Add new live sessions not yet in DB
 		if liveIDs != nil {
@@ -377,8 +377,10 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 
 	// Re-read workstreams to get updated state and append non-live sessions
 	workstreams = db.AllWorkstreams(d)
+	displayNames := make(map[string]string)
 	for _, ws := range workstreams {
-		liveIDs := liveByTmux[ws.DisplayName]
+		displayNames[ws.TmuxID] = ws.DisplayName
+		liveIDs := liveByTmux[ws.TmuxID]
 
 		for _, cs := range ws.Sessions {
 			if liveIDs != nil && liveIDs[cs.SessionID] {
@@ -389,12 +391,19 @@ func reconcileDBWithLive(d *sql.DB, liveSessions []*Session) []*Session {
 				status = StatusDeleted
 			}
 			liveSessions = append(liveSessions, &Session{
-				SessionID:   cs.SessionID,
-				TmuxSession: ws.DisplayName,
-				ClaudeName:  cs.DisplayName,
-				Summary:     db.LoadSummaryDB(d, cs.SessionID),
-				Status:      status,
+				SessionID:       cs.SessionID,
+				TmuxSession:     ws.TmuxID,
+				TmuxDisplayName: ws.DisplayName,
+				ClaudeName:      cs.DisplayName,
+				Summary:         db.LoadSummaryDB(d, cs.SessionID),
+				Status:          status,
 			})
+		}
+	}
+
+	for _, s := range liveSessions {
+		if name, ok := displayNames[s.TmuxSession]; ok {
+			s.TmuxDisplayName = name
 		}
 	}
 
@@ -420,8 +429,8 @@ func cleanupSoftDeleted(d *sql.DB, liveSessions []*Session) {
 	// Soft-delete workstreams with zero remaining sessions
 	for _, ws := range db.AllWorkstreams(d) {
 		if len(ws.Sessions) == 0 {
-			if tmuxSessionExists(ws.DisplayName) {
-				exec.Command("tmux", "kill-session", "-t", ws.DisplayName).Run()
+			if tmuxSessionExists(ws.TmuxID) {
+				exec.Command("tmux", "kill-session", "-t", ws.TmuxID).Run()
 			}
 			db.DeleteWorkstream(d, ws.WorkstreamID)
 		}
@@ -465,7 +474,7 @@ func discoverTmuxSessions(prev map[string]*Session) []*Session {
 	knownTmux := make(map[string]bool)
 	if d != nil {
 		for _, ws := range db.AllWorkstreams(d) {
-			knownTmux[ws.DisplayName] = true
+			knownTmux[ws.TmuxID] = true
 		}
 	}
 

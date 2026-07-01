@@ -30,26 +30,27 @@ func Reconcile(d *sql.DB) {
 			continue
 		}
 
-		if tmuxSessionExists(ws.DisplayName) {
+		if tmuxSessionExists(ws.TmuxID) {
 			continue
 		}
 
 		first := activeSessions[0]
 		cwd := FindSessionCWD(first.SessionID)
 		if cwd == "" || !ValidateCWD(cwd) {
-			fmt.Fprintf(os.Stderr, "reconcile: skip %s: bad cwd %q\n", ws.DisplayName, cwd)
+			fmt.Fprintf(os.Stderr, "reconcile: skip %s: bad cwd %q\n", ws.TmuxID, cwd)
 			continue
 		}
 
 		cmd := exec.Command("tmux",
-			"new-session", "-d", "-s", ws.DisplayName, "-c", cwd,
+			"new-session", "-d", "-s", ws.TmuxID, "-c", cwd,
 			claudePath, "--resume", first.SessionID,
 		)
 		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "reconcile: fail %s: %v\n", ws.DisplayName, err)
+			fmt.Fprintf(os.Stderr, "reconcile: fail %s: %v\n", ws.TmuxID, err)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "reconcile: restored %s\n", ws.DisplayName)
+		exec.Command("tmux", "set-option", "-t", ws.TmuxID, "@display_name", ws.DisplayName).Run()
+		fmt.Fprintf(os.Stderr, "reconcile: restored %s\n", ws.TmuxID)
 
 		for _, cs := range activeSessions[1:] {
 			csCwd := FindSessionCWD(cs.SessionID)
@@ -57,7 +58,7 @@ func Reconcile(d *sql.DB) {
 				csCwd = cwd
 			}
 			exec.Command("tmux",
-				"new-window", "-t", ws.DisplayName, "-c", csCwd,
+				"new-window", "-t", ws.TmuxID, "-c", csCwd,
 				claudePath, "--resume", cs.SessionID,
 			).Run()
 		}
