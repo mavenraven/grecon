@@ -34,6 +34,10 @@ var migrations = []string{
 	`ALTER TABLE workstreams ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
 	ALTER TABLE tmux_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
 	ALTER TABLE claude_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT '';`,
+
+	`UPDATE workstreams SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE created_at = '';
+	UPDATE tmux_sessions SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE created_at = '';
+	UPDATE claude_sessions SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE created_at = '';`,
 }
 
 func migrate(d *sql.DB) error {
