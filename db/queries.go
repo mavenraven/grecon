@@ -186,7 +186,8 @@ func worktreeGone(sessionID string) bool {
 	}
 	defer f.Close()
 
-	var lastWorktreePath string
+	hadWorktree := false
+	lastWorktreePath := ""
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
@@ -195,8 +196,8 @@ func worktreeGone(sessionID string) bool {
 			continue
 		}
 		var entry struct {
-			Type             string `json:"type"`
-			WorktreeSession  *struct {
+			Type            string `json:"type"`
+			WorktreeSession *struct {
 				WorktreePath string `json:"worktreePath"`
 			} `json:"worktreeSession"`
 		}
@@ -204,13 +205,17 @@ func worktreeGone(sessionID string) bool {
 			if entry.WorktreeSession == nil {
 				lastWorktreePath = ""
 			} else {
+				hadWorktree = true
 				lastWorktreePath = entry.WorktreeSession.WorktreePath
 			}
 		}
 	}
 
-	if lastWorktreePath == "" {
+	if !hadWorktree {
 		return false
+	}
+	if lastWorktreePath == "" {
+		return true
 	}
 	_, err = os.Stat(lastWorktreePath)
 	return err != nil
