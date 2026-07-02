@@ -13,7 +13,7 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:     "grecon",
 		Short:   "Pick and switch between Claude Code sessions running in tmux",
-		Version: "0.7.0",
+		Version: "1.0.0-rc1",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, err := client.RunTUI()
 			if err != nil {

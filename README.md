@@ -28,7 +28,7 @@ Grecon is a fork of recon, which shares the same tmux companion philosophy.
 ## Getting started
 
 ```bash
-go install github.com/mavenraven/grecon@latest
+go install github.com/mavenraven/grecon@v1.0.0-rc1
 grecon server &
 ```
 
