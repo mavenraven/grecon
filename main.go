@@ -9,11 +9,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "grecon",
 		Short:   "Pick and switch between Claude Code sessions running in tmux",
-		Version: "1.0.0-rc1",
+		Version: version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target, err := client.RunTUI()
 			if err != nil {

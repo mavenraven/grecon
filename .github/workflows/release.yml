@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    tags: ['v*']
 
 permissions:
   contents: write
@@ -18,18 +18,27 @@ jobs:
           go-version: stable
 
       - name: Build (arm64)
-        run: GOARCH=arm64 GOOS=darwin go build -o grecon-darwin-arm64 .
+        run: GOARCH=arm64 GOOS=darwin go build -ldflags "-X main.version=${{ github.ref_name }}" -o grecon-darwin-arm64 .
 
       - name: Build (x86_64)
-        run: GOARCH=amd64 GOOS=darwin go build -o grecon-darwin-amd64 .
+        run: GOARCH=amd64 GOOS=darwin go build -ldflags "-X main.version=${{ github.ref_name }}" -o grecon-darwin-amd64 .
+
+      - name: Build (linux arm64)
+        run: GOARCH=arm64 GOOS=linux go build -ldflags "-X main.version=${{ github.ref_name }}" -o grecon-linux-arm64 .
+
+      - name: Build (linux x86_64)
+        run: GOARCH=amd64 GOOS=linux go build -ldflags "-X main.version=${{ github.ref_name }}" -o grecon-linux-amd64 .
 
       - name: Publish release
         run: |
-          chmod +x grecon-darwin-arm64 grecon-darwin-amd64
-          SHORT_SHA="${GITHUB_SHA::7}"
-          gh release create "${SHORT_SHA}" grecon-darwin-arm64 grecon-darwin-amd64 \
-            --title "grecon ${SHORT_SHA}" \
-            --notes "Built from \`${GITHUB_SHA}\` on $(date -u +%Y-%m-%d)" \
-            --latest
+          chmod +x grecon-*
+          PRERELEASE=""
+          if [[ "${{ github.ref_name }}" == *"-rc"* ]]; then
+            PRERELEASE="--prerelease"
+          fi
+          gh release create "${{ github.ref_name }}" grecon-* \
+            --title "grecon ${{ github.ref_name }}" \
+            --generate-notes \
+            $PRERELEASE
         env:
           GH_TOKEN: ${{ github.token }}
