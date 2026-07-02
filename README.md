@@ -12,7 +12,7 @@ Different category of tool. Claude Squad is a terminal IDE that abstracts over t
 
 - **Claude Squad takes over your terminal.** Sessions run in a tiny embedded window. Grecon lets you use full-size tmux panes.
 - **Claude Squad is prescriptive.** It manages session creation, worktrees, branches. Grecon works with whatever tmux layout you already have.
-- **Claude Squad manages state.** `~/.claude-squad/state.json`, a `worktrees/` directory — can get out of sync. Grecon is stateless.
+- **Claude Squad manages state.** `~/.claude-squad/state.json`, a `worktrees/` directory, which can get out of sync. Grecon is stateless.
 - **Grecon adds** AI summaries, live status, background task tracking, subagent visibility, wakeup countdowns, custom tags.
 
 ### vs [recon](https://github.com/craftzdog/tmux-claude-session-manager)
