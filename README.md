@@ -28,24 +28,27 @@ Works with any tmux + Claude Code workflow: one Claude session per tmux session,
 
 ## Why grecon?
 
-There are several tools for managing Claude Code sessions. Here's how grecon compares:
+If [Claude Squad](https://github.com/smtg-ai/claude-squad) or [recon](https://github.com/craftzdog/tmux-claude-session-manager) had fit my needs, I wouldn't have built grecon.
 
-| | grecon | [Claude Squad](https://github.com/smtg-ai/claude-squad) | [recon](https://github.com/craftzdog/tmux-claude-session-manager) |
-|---|---|---|---|
-| **Approach** | Picker — find and switch | All-in-one — tmux abstraction | Popup picker |
-| **Philosophy** | Companion to tmux | Replacement for tmux | Companion to tmux |
-| **Startup** | Instant — server has data ready | Loads on launch | Scans on launch (1-2s delay) |
-| **Terminal** | Full-size tmux panes | Tiny embedded window | Popup overlay |
-| **Session mgmt** | No — use tmux directly | Yes — creates/manages sessions | Yes — creates sessions |
-| **Worktree mgmt** | No — use git directly | Yes — creates worktrees | No |
-| **Push branches** | No — use git directly | Yes | No |
-| **Workflow** | Non-prescriptive — works with any tmux layout | Prescriptive — sessions live inside the tool | Tied to its own session model |
-| **State** | None — completely stateless | Manages its own state | Manages its own state |
-| **AI summaries** | Yes — Haiku-generated | No | No |
-| **Background tasks** | Yes — tracks shell/monitor/wakeup | No | No |
-| **Subagents** | Yes — shows spawned agents | No | No |
+### grecon vs Claude Squad
 
-**grecon's opinion:** These are different categories of tool. Claude Squad is a terminal-based IDE for Claude that abstracts over tmux — it manages sessions, worktrees, branches, and gives you an embedded terminal to work through. Grecon is a tmux picker that works well with Claude — like `fzf` for your running sessions. Your terminal is yours; grecon doesn't take it over. You open it, switch sessions, and close it. Your Claude sessions run in full-size tmux panes that you control. For session creation, use `claude` directly (or skills). For persistence, use tmux-resurrect.
+These are different categories of tool. Claude Squad is a terminal-based IDE for Claude that abstracts over tmux. Grecon is a tmux picker — like `fzf` for your running Claude sessions.
+
+- **Claude Squad takes over your terminal.** Your Claude sessions run in a tiny embedded window inside Claude Squad's UI. With grecon, your sessions run in full-size tmux panes that you control — grecon is just a picker you open, switch with, and close.
+- **Claude Squad is prescriptive.** It manages session creation, git worktrees, branch pushing — sessions live inside the tool. Grecon is non-prescriptive — it works with whatever tmux layout you already have. Use `claude` directly, use skills, use a launcher, whatever. Grecon doesn't care.
+- **Claude Squad manages state.** It writes `~/.claude-squad/state.json` and maintains a `worktrees/` directory. This state can get out of sync with the actual tmux/git state. Grecon is completely stateless — it reads tmux and Claude's JSONL logs and never writes anything to disk.
+- **Grecon has features Claude Squad doesn't.** AI-generated summaries (Haiku), background task tracking (shell/monitor with live/dead status), subagent visibility, wakeup timer countdowns, custom tmux tags. All derived from what's already there, zero state.
+- **Claude Squad has features grecon doesn't.** Session creation, git worktree management, branch pushing, checkout. These are intentionally out of scope for grecon — use tmux and git directly, or use skills.
+
+### grecon vs recon
+
+Grecon is a fork of [recon](https://github.com/craftzdog/tmux-claude-session-manager) and shares its philosophy — both are companions to tmux, not replacements. The key differences:
+
+- **Startup speed.** Recon scans tmux and parses JSONL on launch, which takes 1-2 seconds. Grecon runs a background server that polls continuously, so the picker opens instantly with data already ready.
+- **AI summaries.** Grecon generates one-line Haiku summaries of what each agent is working on. Recon shows raw session info.
+- **Background tasks and subagents.** Grecon parses the JSONL to show running background commands, monitor tools, spawned sub-agents, and wakeup timer countdowns. Recon doesn't.
+- **Custom tags.** Grecon reads `@grecon/*` tmux session options and displays them in the picker.
+- **Stateless.** Recon manages its own session model. Grecon has no state at all.
 
 ## Features
 
@@ -54,10 +57,8 @@ There are several tools for managing Claude Code sessions. Here's how grecon com
 - **Background tasks** — see Bash commands and Monitor tools running in the background, with live/dead status
 - **Subagents** — see spawned sub-agents (workflows, teammates) nested under their parent
 - **Wakeup timers** — live countdown for `ScheduleWakeup` calls (polling loops, scheduled checks)
-- **Search** — filter sessions by name with `/`
-- **Jump to input** — press `i` to jump straight to the next agent that needs your attention
-
 - **Custom tags** — set `@grecon/*` tmux session options and they show up in the picker automatically
+- **Search** — filter sessions by name with `/`
 All of this is derived from tmux pane content and Claude's JSONL logs. Zero state.
 
 ## Getting started
