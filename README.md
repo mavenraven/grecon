@@ -32,10 +32,13 @@ There are several tools for managing Claude Code sessions. Here's how grecon com
 
 | | grecon | [Claude Squad](https://github.com/smtg-ai/claude-squad) | [recon](https://github.com/craftzdog/tmux-claude-session-manager) |
 |---|---|---|---|
-| **Approach** | Picker — find and switch | All-in-one — embedded terminal | Popup picker |
+| **Approach** | Picker — find and switch | All-in-one — tmux abstraction | Popup picker |
+| **Philosophy** | Companion to tmux | Replacement for tmux | Companion to tmux |
 | **Startup** | Instant — server has data ready | Loads on launch | Scans on launch (1-2s delay) |
 | **Terminal** | Full-size tmux panes | Tiny embedded window | Popup overlay |
 | **Session mgmt** | No — use tmux directly | Yes — creates/manages sessions | Yes — creates sessions |
+| **Worktree mgmt** | No — use git directly | Yes — creates worktrees | No |
+| **Push branches** | No — use git directly | Yes | No |
 | **Workflow** | Non-prescriptive — works with any tmux layout | Prescriptive — sessions live inside the tool | Tied to its own session model |
 | **State** | None — completely stateless | Manages its own state | Manages its own state |
 | **AI summaries** | Yes — Haiku-generated | No | No |
