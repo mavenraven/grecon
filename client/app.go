@@ -218,21 +218,7 @@ func (a *App) HandleKey(code string, ctrl bool) {
 		a.handleKeyFilter(code, ctrl)
 		return
 	}
-	if code == "tab" || code == "i" {
-		a.jumpToNextInput()
-		return
-	}
 	a.handleKeyTable(code, ctrl)
-}
-
-func (a *App) jumpToNextInput() {
-	for _, s := range a.Sessions {
-		if s.Status == server.StatusInput && s.PaneTarget != "" {
-			a.SwitchTarget = s.PaneTarget
-			a.ShouldQuit = true
-			return
-		}
-	}
 }
 
 func (a *App) handleKeyTable(code string, ctrl bool) {
@@ -333,8 +319,8 @@ func (a *App) handleKeyFilter(code string, ctrl bool) {
 		if a.Selected > 0 {
 			a.Selected--
 		}
-	case code == "tab" || code == "i":
-		a.jumpToNextInput()
+	case code == "tab":
+		a.FilterActive = false
 	case len(code) == 1 && !ctrl:
 		runes := []rune(a.FilterText)
 		ch := []rune(code)[0]

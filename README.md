@@ -77,7 +77,6 @@ Reload with `tmux source ~/.tmux.conf`, then press your prefix + `g`.
 | `Enter` | Switch to selected session |
 | `x` | Kill selected pane |
 | `/` | Search/filter sessions |
-| `i` or `Tab` | Jump to next session waiting for input |
 | `q` | Quit |
 
 ## How it works

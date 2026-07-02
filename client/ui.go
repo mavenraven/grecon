@@ -441,7 +441,6 @@ func renderFooter(b *strings.Builder, app *App, width int) {
 			cyanStyle.Render("Enter") + " switch  " +
 			cyanStyle.Render("x") + " kill  " +
 			cyanStyle.Render("/") + " search  " +
-			cyanStyle.Render("i") + " next input  " +
 			cyanStyle.Render("q") + " quit"
 	}
 	b.WriteString(fitToWidth(line, width))
