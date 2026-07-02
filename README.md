@@ -6,6 +6,8 @@ Grecon discovers every Claude Code instance running in your tmux sessions and sh
 
 Completely stateless — grecon reads tmux and Claude's own JSONL logs. It never writes anything to disk.
 
+Works with any tmux + Claude Code workflow: one Claude session per tmux session, multiple Claude sessions in one tmux session, or a mix. Grecon doesn't care how you organize things — it finds every Claude process in every tmux pane and shows them all.
+
 ```
 +- grecon -- Claude Code Sessions ----------------------------------------+
 | Name                      Status    Summary                             |
