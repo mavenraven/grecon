@@ -61,8 +61,6 @@ func attachSummary(key, jsonlPath string, target *string) {
 		globalSummary.hashes[key] = hash
 
 		if activity == "" {
-			globalSummary.summaries[key] = ""
-			*target = ""
 			globalSummary.mu.Unlock()
 		} else {
 			globalSummary.pending[key] = true
