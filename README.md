@@ -95,9 +95,20 @@ Summaries are generated lazily by calling Haiku when JSONL content changes.
 
 The TUI subscribes to the server and gets instant updates. That's it — no database, no files on disk, no state to get out of sync.
 
-## What about session creation / resume?
+## Design decisions
 
-Grecon is just a picker. For creating sessions, use `claude` directly (or build a launcher). For persisting sessions across reboots, use [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect). Grecon is designed to compose with these tools, not replace them.
+**Grecon is a picker, not a platform.** One screen, no persistent state, no session creation or management. It reads tmux and Claude's JSONL logs — it never writes anything to disk.
+
+**Anti-goals:**
+- Additional screens or modes
+- Persistent state of any kind (no database, no files on disk)
+- Session creation, resume, or lifecycle management
+
+**What might be added:** new stateless data in the existing picker — tmux session properties, working directory, etc. Just more data read from tmux or the JSONL. No new screens, no state.
+
+**Time horizon:** This tool is meant to be useful for the next 12-24 months of AI tooling evolution, not the next 10 years. Someone will build something better. The goal is to help people now while Claude Code is tmux-based, not to build the perfect tool for a future that's moving too fast to predict.
+
+**What about session creation / resume?** Use `claude` directly, or build a launcher as a separate project. For persisting sessions across reboots, use [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect). Grecon composes with these tools, it doesn't replace them.
 
 ## License
 
