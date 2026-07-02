@@ -36,6 +36,7 @@ Works with any tmux + Claude Code workflow: one Claude session per tmux session,
 - **Search** — filter sessions by name with `/`
 - **Jump to input** — press `i` to jump straight to the next agent that needs your attention
 
+- **Custom tags** — set `@grecon/*` tmux options on sessions or panes, and they show up in the picker automatically
 All of this is derived from tmux pane content and Claude's JSONL logs. Zero state.
 
 ## Getting started
@@ -110,6 +111,20 @@ The TUI subscribes to the server and gets instant updates. That's it — no data
 **Instant startup:** The picker opens instantly because the server is always running and has fresh data ready. No waiting for discovery on launch — the TUI connects, gets the latest snapshot, and renders immediately. That's the whole reason for the client/server split.
 
 **Time horizon:** This tool is meant to be useful for the next 12-24 months of AI tooling evolution, not the next 10 years. Someone will build something better. The goal is to help people now while Claude Code is tmux-based, not to build the perfect tool for a future that's moving too fast to predict.
+
+### Custom tags
+
+Set tmux user options prefixed with `@grecon/` to display custom metadata in the picker:
+
+```bash
+# Session-level tag (shows under the tmux session header)
+tmux set -s @grecon/env "production"
+
+# Pane-level tag (shows nested under a specific claude session)
+tmux set -p @grecon/ticket "JIRA-123"
+```
+
+Tags are read-only from grecon's perspective — your launcher or workflow scripts set them, grecon just displays them.
 
 **What about session creation / resume?** Use `claude` directly, or build a launcher as a separate project. For persisting sessions across reboots, use [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect). Grecon composes with these tools, it doesn't replace them.
 

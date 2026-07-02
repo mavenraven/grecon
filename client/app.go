@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ const (
 	RowSubagent
 	RowWakeup
 	RowBackground
+	RowTag
 )
 
 type DisplayRow struct {
@@ -27,6 +29,7 @@ type DisplayRow struct {
 	Wakeup         *server.Wakeup
 	BackgroundTask *server.BackgroundTask
 	Header         string
+	TagLabel       string
 	IsLast         bool
 	AgentIsLast    bool
 }
@@ -122,6 +125,14 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 	var rows []DisplayRow
 	for _, g := range groups {
 		rows = append(rows, DisplayRow{Kind: RowHeader, Header: g.name})
+
+		// Session-level tags (from first session in group, they all share the same tmux session)
+		if len(g.sessions) > 0 {
+			for _, label := range sortedTagLabels(g.sessions[0].TmuxTags) {
+				rows = append(rows, DisplayRow{Kind: RowTag, TagLabel: label})
+			}
+		}
+
 		for i, s := range g.sessions {
 			lastAgent := i == len(g.sessions)-1
 			rows = append(rows, DisplayRow{
@@ -134,6 +145,16 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 				tailCount++
 			}
 			tailCount += len(s.BackgroundTasks)
+			tailCount += len(s.PaneTags)
+
+			for _, label := range sortedTagLabels(s.PaneTags) {
+				tailCount--
+				rows = append(rows, DisplayRow{
+					Kind: RowTag, Session: s, TagLabel: label,
+					IsLast:      tailCount == 0 && len(s.Subagents) == 0,
+					AgentIsLast: lastAgent,
+				})
+			}
 
 			for j, sa := range s.Subagents {
 				rows = append(rows, DisplayRow{
@@ -160,6 +181,22 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 		}
 	}
 	return rows
+}
+
+func sortedTagLabels(tags map[string]string) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	labels := make([]string, len(keys))
+	for i, k := range keys {
+		labels[i] = fmt.Sprintf("%s: %s", k, tags[k])
+	}
+	return labels
 }
 
 func (a *App) filteredSessions() []*server.Session {

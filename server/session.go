@@ -90,6 +90,8 @@ type Session struct {
 	Wakeup            *Wakeup           `json:"wakeup,omitempty"`
 	BackgroundTasks   []*BackgroundTask          `json:"background_tasks,omitempty"`
 	PendingBgCalls    map[string]*BackgroundTask `json:"-"`
+	TmuxTags          map[string]string          `json:"tmux_tags,omitempty"`
+	PaneTags          map[string]string          `json:"pane_tags,omitempty"`
 }
 
 type Subagent struct {
@@ -904,9 +906,11 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 
 	var paneContents map[string]string
 	var tmuxEnv map[string]map[string]string
+	var sessionTags map[string]map[string]string
+	var paneTags map[string]map[string]string
 
 	var wgB sync.WaitGroup
-	wgB.Add(2)
+	wgB.Add(4)
 	go func() {
 		defer wgB.Done()
 		paneContents = capturePanesByTarget(claudeTargets)
@@ -914,6 +918,14 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 	go func() {
 		defer wgB.Done()
 		tmuxEnv = readEnvForSessions(sessionNames)
+	}()
+	go func() {
+		defer wgB.Done()
+		sessionTags = readGreconTagsForSessions(sessionNames)
+	}()
+	go func() {
+		defer wgB.Done()
+		paneTags = readGreconTagsForPanes(claudeTargets)
 	}()
 	wgB.Wait()
 
@@ -1031,6 +1043,8 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				Wakeup:            info.wakeup,
 				BackgroundTasks:   info.backgroundTasks,
 				PendingBgCalls:    info.pendingBgCalls,
+				TmuxTags:          sessionTags[live.tmuxSession],
+				PaneTags:          paneTags[live.paneTarget],
 			}
 		}(i, c[0], c[1], c[2])
 	}
@@ -1136,6 +1150,8 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					Wakeup:            info.wakeup,
 					BackgroundTasks:   info.backgroundTasks,
 					PendingBgCalls:    info.pendingBgCalls,
+					TmuxTags:          sessionTags[live.tmuxSession],
+					PaneTags:          paneTags[live.paneTarget],
 				}
 			} else {
 				projName, relDir, branch := gitProjectInfo(live.paneCWD)
@@ -1153,6 +1169,8 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					PID:         live.pid,
 					StartedAt:   live.startedAt,
 					Tags:        tags,
+					TmuxTags:    sessionTags[live.tmuxSession],
+					PaneTags:    paneTags[live.paneTarget],
 					ClaudeName:  NameNewSession,
 				}
 			}
@@ -1694,6 +1712,87 @@ func findJSONLForResumedSession(pid int) string {
 		return ""
 	}
 	return findJSONLBySessionID(origID)
+}
+
+const greconTagPrefix = "@grecon/"
+
+func readGreconTags(flag, target string) map[string]string {
+	out, err := exec.Command("tmux", "show-options", flag, "-t", target).Output()
+	if err != nil {
+		return nil
+	}
+	tags := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, greconTagPrefix) {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, " "); ok {
+			key := strings.TrimPrefix(k, greconTagPrefix)
+			v = strings.Trim(v, "\"")
+			if key != "" {
+				tags[key] = v
+			}
+		}
+	}
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
+}
+
+func readGreconTagsForSessions(sessionNames []string) map[string]map[string]string {
+	type result struct {
+		name string
+		tags map[string]string
+	}
+	ch := make(chan result, len(sessionNames))
+	var wg sync.WaitGroup
+	for _, name := range sessionNames {
+		wg.Add(1)
+		go func(n string) {
+			defer wg.Done()
+			tags := readGreconTags("-s", n)
+			if tags != nil {
+				ch <- result{n, tags}
+			}
+		}(name)
+	}
+	wg.Wait()
+	close(ch)
+
+	m := make(map[string]map[string]string)
+	for r := range ch {
+		m[r.name] = r.tags
+	}
+	return m
+}
+
+func readGreconTagsForPanes(paneTargets []string) map[string]map[string]string {
+	type result struct {
+		target string
+		tags   map[string]string
+	}
+	ch := make(chan result, len(paneTargets))
+	var wg sync.WaitGroup
+	for _, target := range paneTargets {
+		wg.Add(1)
+		go func(t string) {
+			defer wg.Done()
+			tags := readGreconTags("-p", t)
+			if tags != nil {
+				ch <- result{t, tags}
+			}
+		}(target)
+	}
+	wg.Wait()
+	close(ch)
+
+	m := make(map[string]map[string]string)
+	for r := range ch {
+		m[r.target] = r.tags
+	}
+	return m
 }
 
 func readEnvFromBatch(env map[string]map[string]string, sessionName, varName string) string {
