@@ -45,7 +45,7 @@ There are several tools for managing Claude Code sessions. Here's how grecon com
 | **Background tasks** | Yes — tracks shell/monitor/wakeup | No | No |
 | **Subagents** | Yes — shows spawned agents | No | No |
 
-**grecon's opinion:** Your terminal is yours. Grecon doesn't take it over or force you into a tiny window — it's a picker you open, switch sessions with, and close. Your Claude sessions run in full-size tmux panes that you control. If you want session creation, use `claude` directly or a launcher. If you want persistence, use tmux-resurrect.
+**grecon's opinion:** These are different categories of tool. Claude Squad is a terminal-based IDE for Claude — it manages sessions, worktrees, branches, and gives you an embedded terminal to work through. Grecon is a tmux picker that works well with Claude — like `fzf` for your running sessions. Your terminal is yours; grecon doesn't take it over. You open it, switch sessions, and close it. Your Claude sessions run in full-size tmux panes that you control. For session creation, use `claude` directly (or skills). For persistence, use tmux-resurrect.
 
 ## Features
 
