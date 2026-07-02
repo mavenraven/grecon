@@ -117,8 +117,8 @@ The TUI subscribes to the server and gets instant updates. That's it — no data
 Set tmux user options prefixed with `@grecon/` to display custom metadata in the picker:
 
 ```bash
-tmux set -s @grecon/env "production"
-tmux set -s @grecon/team "platform"
+tmux set @grecon/env "production"
+tmux set @grecon/team "platform"
 ```
 
 Tags appear under the tmux session header in the picker. They're read-only from grecon's perspective — your launcher or workflow scripts set them, grecon just displays them.

@@ -1709,8 +1709,8 @@ func findJSONLForResumedSession(pid int) string {
 
 const greconTagPrefix = "@grecon/"
 
-func readGreconTags(flag, target string) map[string]string {
-	out, err := exec.Command("tmux", "show-options", flag, "-t", target).Output()
+func readGreconTags(target string) map[string]string {
+	out, err := exec.Command("tmux", "show-options", "-t", target).Output()
 	if err != nil {
 		return nil
 	}
@@ -1745,7 +1745,7 @@ func readGreconTagsForSessions(sessionNames []string) map[string]map[string]stri
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
-			tags := readGreconTags("-s", n)
+			tags := readGreconTags(n)
 			if tags != nil {
 				ch <- result{n, tags}
 			}
