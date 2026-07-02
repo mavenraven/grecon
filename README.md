@@ -123,7 +123,13 @@ tmux set @grecon/team "platform"
 
 Tags appear under the tmux session header in the picker. They're read-only from grecon's perspective — your launcher or workflow scripts set them, grecon just displays them.
 
-**What about session creation / resume?** Use `claude` directly, or build a launcher as a separate project. For persisting sessions across reboots, use [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect). Grecon composes with these tools, it doesn't replace them.
+**What about session persistence / resume?** Use these tmux plugins — they handle it better than any custom solution:
+
+- [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) — saves and restores tmux session layouts
+- [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) — auto-saves resurrect state periodically
+- [tmux-assistant-resurrect](https://github.com/nicksp/tmux-assistant-resurrect) — hooks into resurrect to resume Claude Code (and other AI assistants) with the correct `--resume` flags
+
+This stack handles persistence across reboots. Grecon handles the live picker. They compose cleanly — grecon sees whatever tmux-resurrect brings back.
 
 ## License
 
