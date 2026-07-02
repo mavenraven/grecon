@@ -12,7 +12,7 @@ If [Claude Squad](https://github.com/smtg-ai/claude-squad) or [recon](https://gi
 
 These are different categories of tool. Claude Squad is a terminal-based IDE for Claude that abstracts over tmux. Grecon is a tmux picker — like `fzf` for your running Claude sessions.
 
-- **Claude Squad takes over your terminal.** Your Claude sessions run in a tiny embedded window inside Claude Squad's UI. With grecon, your sessions run in full-size tmux panes that you control — grecon is just a picker you open, switch with, and close.
+- **Claude Squad takes over your terminal.** Your Claude sessions run in a tiny embedded window inside Claude Squad's UI. With grecon, your sessions run in full-size tmux panes that you control.
 - **Claude Squad is prescriptive.** It manages session creation, git worktrees, branch pushing — sessions live inside the tool. Grecon is non-prescriptive — it works with whatever tmux layout you already have.
 - **Claude Squad manages state.** It writes `~/.claude-squad/state.json` and maintains a `worktrees/` directory. This state can get out of sync with the actual tmux/git state. Grecon is completely stateless — it reads tmux and Claude's JSONL logs and never writes anything to disk.
 - **Grecon has features Claude Squad doesn't.** AI-generated summaries (Haiku), live status (working/idle/input), background task tracking, subagent visibility, wakeup timer countdowns, custom tmux tags.
