@@ -198,10 +198,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 
 			agentName := s.ClaudeName
 			if agentName == "" {
-				agentName = s.ProjectName
-			}
-			if agentName == "" {
-				agentName = "—"
+				agentName = "-"
 			}
 			nameCol := ansiColor("90", prefix) + truncEllipsis(agentName, colName-visibleWidth(prefix))
 

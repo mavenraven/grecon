@@ -63,8 +63,6 @@ func RunServer() {
 
 	fmt.Fprintf(os.Stderr, "grecon server listening on %s\n", path)
 
-	go listenCommands()
-
 	broadcast := func(sessions []*Session) {
 		for _, s := range sessions {
 			if status, ok := pw.GetStatus(s.TmuxSession); ok {
@@ -88,8 +86,6 @@ func RunServer() {
 		subs = alive
 		mu.Unlock()
 	}
-
-	go RefreshResumeCache(nil)
 
 	go func() {
 		defer func() {
@@ -126,13 +122,6 @@ func RunServer() {
 
 				broadcast(sessions)
 
-				if pollCount%20 == 0 {
-					liveIDs := make(map[string]bool)
-					for _, s := range sessions {
-						liveIDs[s.SessionID] = true
-					}
-					go RefreshResumeCache(liveIDs)
-				}
 			}
 		}
 	}()

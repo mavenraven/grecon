@@ -16,6 +16,7 @@ import (
 )
 
 const maxLineBytes = 10 * 1024 * 1024
+const NameNewSession = "<new session>"
 
 type SessionStatus int
 
@@ -995,11 +996,15 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 			projName, relDir, branch := gitProjectInfo(cwd)
 			rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 			status := debounceStatus(sessionID, rawStatus)
-			SaveTmuxName(sessionID, live.tmuxSession)
-			saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
 			tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 			subagents := discoverSubagents(path)
-			claudeName := LoadClaudeName(sessionID)
+			claudeName := ""
+			if prev != nil && prev.ClaudeName != "" && prev.ClaudeName != NameNewSession {
+				claudeName = prev.ClaudeName
+			}
+			if claudeName == "" {
+				claudeName = readClaudeNameFromJSONL(path)
+			}
 
 			results[idx] = &Session{
 				SessionID:         sessionID,
@@ -1102,11 +1107,9 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				projName, relDir, branch := gitProjectInfo(cwd)
 				rawStatus := determineStatus(info.inputTokens, info.outputTokens, live.paneTarget, paneContents)
 				status := debounceStatus(sessionID, rawStatus)
-				SaveTmuxName(sessionID, live.tmuxSession)
-				saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
 				subagents := discoverSubagents(resolvedPath)
-				claudeName := LoadClaudeName(sessionID)
+				claudeName := readClaudeNameFromJSONL(resolvedPath)
 
 				unmatchedResults[idx] = &Session{
 					SessionID:         sessionID,
@@ -1135,11 +1138,8 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					PendingBgCalls:    info.pendingBgCalls,
 				}
 			} else {
-				SaveTmuxName(sessionID, live.tmuxSession)
-				saveClaudeNameFromEnv(sessionID, tmuxEnv, live.tmuxSession)
 				projName, relDir, branch := gitProjectInfo(live.paneCWD)
 				tags := readTmuxTagsFrom(tmuxEnv, live.tmuxSession)
-				claudeName := LoadClaudeName(sessionID)
 
 				unmatchedResults[idx] = &Session{
 					SessionID:   sessionID,
@@ -1153,7 +1153,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					PID:         live.pid,
 					StartedAt:   live.startedAt,
 					Tags:        tags,
-					ClaudeName:  claudeName,
+					ClaudeName:  NameNewSession,
 				}
 			}
 		}(i, u.sessionID, u.live)
@@ -1644,76 +1644,30 @@ func discoverSubagents(jsonlPath string) []*Subagent {
 	return subagents
 }
 
-func reconDir(subdir string) string {
-	home, err := os.UserHomeDir()
+func readClaudeNameFromJSONL(path string) string {
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".recon", subdir)
-}
-
-func SaveTmuxName(sessionID, tmuxName string) {
-	if strings.HasPrefix(sessionID, "tmux-") {
-		return
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for i := 0; i < 30 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		if !strings.Contains(line, `"agent-name"`) && !strings.Contains(line, `"custom-title"`) {
+			continue
+		}
+		var v map[string]interface{}
+		if json.Unmarshal([]byte(line), &v) == nil {
+			if name, ok := v["agentName"].(string); ok && name != "" {
+				return name
+			}
+			if name, ok := v["customTitle"].(string); ok && name != "" {
+				return name
+			}
+		}
 	}
-	dir := reconDir("tmux-names")
-	if dir == "" {
-		return
-	}
-	path := filepath.Join(dir, sessionID)
-	existing, _ := os.ReadFile(path)
-	if strings.TrimSpace(string(existing)) == tmuxName {
-		return
-	}
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(path, []byte(tmuxName), 0o644)
-}
-
-func LoadTmuxName(sessionID string) string {
-	dir := reconDir("tmux-names")
-	if dir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(dir, sessionID))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func SaveClaudeName(sessionID, claudeName string) {
-	if strings.HasPrefix(sessionID, "tmux-") {
-		return
-	}
-	dir := reconDir("claude-names")
-	if dir == "" {
-		return
-	}
-	path := filepath.Join(dir, sessionID)
-	if fileExists(path) {
-		return
-	}
-	os.MkdirAll(dir, 0o755)
-	os.WriteFile(path, []byte(claudeName), 0o644)
-}
-
-func LoadClaudeName(sessionID string) string {
-	dir := reconDir("claude-names")
-	if dir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(dir, sessionID))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-func saveClaudeNameFromEnv(sessionID string, env map[string]map[string]string, tmuxSession string) {
-	name := readEnvFromBatch(env, tmuxSession, "RECON_CLAUDE_NAME")
-	if name != "" {
-		SaveClaudeName(sessionID, name)
-	}
+	return ""
 }
 
 func readTmuxTagsFrom(env map[string]map[string]string, sessionName string) map[string]string {
@@ -1787,38 +1741,6 @@ func findJSONLBySessionID(sessionID string) string {
 		}
 	}
 	return bestPath
-}
-
-func FindSessionCWD(sessionID string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	projectsDir := filepath.Join(home, ".claude", "projects")
-	entries, err := os.ReadDir(projectsDir)
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		jsonlPath := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
-		f, err := os.Open(jsonlPath)
-		if err != nil {
-			continue
-		}
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-		for i := 0; i < 20 && scanner.Scan(); i++ {
-			var v map[string]interface{}
-			if json.Unmarshal([]byte(scanner.Text()), &v) == nil {
-				if cwd, ok := v["cwd"].(string); ok {
-					f.Close()
-					return cwd
-				}
-			}
-		}
-		f.Close()
-	}
-	return ""
 }
 
 func fileExists(path string) bool {
