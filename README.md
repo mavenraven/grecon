@@ -17,7 +17,7 @@ Different category of tool. Claude Squad is a terminal IDE that abstracts over t
 
 ### vs [recon](https://github.com/craftzdog/tmux-claude-session-manager)
 
-Grecon is a fork of recon. Same philosophy — companion to tmux, not a replacement.
+Grecon is a fork of recon, which shares the same tmux companion philosophy.
 
 - **Instant startup.** Recon scans on launch (1-2s). Grecon has a background server with data ready.
 - **AI summaries.** One-line Haiku summaries. Recon shows raw info.
