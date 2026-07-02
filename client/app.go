@@ -145,17 +145,6 @@ func buildDisplayRows(sessions []*server.Session) []DisplayRow {
 				tailCount++
 			}
 			tailCount += len(s.BackgroundTasks)
-			tailCount += len(s.PaneTags)
-
-			for _, label := range sortedTagLabels(s.PaneTags) {
-				tailCount--
-				rows = append(rows, DisplayRow{
-					Kind: RowTag, Session: s, TagLabel: label,
-					IsLast:      tailCount == 0 && len(s.Subagents) == 0,
-					AgentIsLast: lastAgent,
-				})
-			}
-
 			for j, sa := range s.Subagents {
 				rows = append(rows, DisplayRow{
 					Kind: RowSubagent, Session: s, Subagent: sa,

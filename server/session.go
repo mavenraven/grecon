@@ -91,7 +91,6 @@ type Session struct {
 	BackgroundTasks   []*BackgroundTask          `json:"background_tasks,omitempty"`
 	PendingBgCalls    map[string]*BackgroundTask `json:"-"`
 	TmuxTags          map[string]string          `json:"tmux_tags,omitempty"`
-	PaneTags          map[string]string          `json:"pane_tags,omitempty"`
 }
 
 type Subagent struct {
@@ -907,10 +906,9 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 	var paneContents map[string]string
 	var tmuxEnv map[string]map[string]string
 	var sessionTags map[string]map[string]string
-	var paneTags map[string]map[string]string
 
 	var wgB sync.WaitGroup
-	wgB.Add(4)
+	wgB.Add(3)
 	go func() {
 		defer wgB.Done()
 		paneContents = capturePanesByTarget(claudeTargets)
@@ -922,10 +920,6 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 	go func() {
 		defer wgB.Done()
 		sessionTags = readGreconTagsForSessions(sessionNames)
-	}()
-	go func() {
-		defer wgB.Done()
-		paneTags = readGreconTagsForPanes(claudeTargets)
 	}()
 	wgB.Wait()
 
@@ -1044,7 +1038,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 				BackgroundTasks:   info.backgroundTasks,
 				PendingBgCalls:    info.pendingBgCalls,
 				TmuxTags:          sessionTags[live.tmuxSession],
-				PaneTags:          paneTags[live.paneTarget],
+
 			}
 		}(i, c[0], c[1], c[2])
 	}
@@ -1151,7 +1145,7 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					BackgroundTasks:   info.backgroundTasks,
 					PendingBgCalls:    info.pendingBgCalls,
 					TmuxTags:          sessionTags[live.tmuxSession],
-					PaneTags:          paneTags[live.paneTarget],
+	
 				}
 			} else {
 				projName, relDir, branch := gitProjectInfo(live.paneCWD)
@@ -1170,7 +1164,6 @@ func DiscoverSessions(prevSessions map[string]*Session) []*Session {
 					StartedAt:   live.startedAt,
 					Tags:        tags,
 					TmuxTags:    sessionTags[live.tmuxSession],
-					PaneTags:    paneTags[live.paneTarget],
 					ClaudeName:  NameNewSession,
 				}
 			}
@@ -1764,33 +1757,6 @@ func readGreconTagsForSessions(sessionNames []string) map[string]map[string]stri
 	m := make(map[string]map[string]string)
 	for r := range ch {
 		m[r.name] = r.tags
-	}
-	return m
-}
-
-func readGreconTagsForPanes(paneTargets []string) map[string]map[string]string {
-	type result struct {
-		target string
-		tags   map[string]string
-	}
-	ch := make(chan result, len(paneTargets))
-	var wg sync.WaitGroup
-	for _, target := range paneTargets {
-		wg.Add(1)
-		go func(t string) {
-			defer wg.Done()
-			tags := readGreconTags("-p", t)
-			if tags != nil {
-				ch <- result{t, tags}
-			}
-		}(target)
-	}
-	wg.Wait()
-	close(ch)
-
-	m := make(map[string]map[string]string)
-	for r := range ch {
-		m[r.target] = r.tags
 	}
 	return m
 }

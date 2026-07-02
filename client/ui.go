@@ -238,27 +238,7 @@ func renderTable(b *strings.Builder, app *App, width, contentHeight int) {
 			agentIdx++
 
 		case RowTag:
-			var prefix string
-			if row.Session != nil {
-				// Pane-level tag — nested under agent
-				var vbar string
-				if row.AgentIsLast {
-					vbar = "   "
-				} else {
-					vbar = " │ "
-				}
-				var branch string
-				if row.IsLast {
-					branch = " └ "
-				} else {
-					branch = " ├ "
-				}
-				prefix = vbar + branch
-			} else {
-				// Session-level tag — at header level
-				prefix = " ├ "
-			}
-
+			prefix := " ├ "
 			rowStr := padCol(ansiColor("90", prefix)+ansiColor("94", row.TagLabel), innerW)
 			b.WriteString("│")
 			b.WriteString(rowStr)
