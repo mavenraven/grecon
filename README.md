@@ -26,6 +26,23 @@ Works with any tmux + Claude Code workflow: one Claude session per tmux session,
  j/k navigate  Enter switch  x kill  / search  i next input  q quit
 ```
 
+## Why grecon?
+
+There are several tools for managing Claude Code sessions. Here's how grecon compares:
+
+| | grecon | [Claude Squad](https://github.com/smtg-ai/claude-squad) | [recon](https://github.com/craftzdog/tmux-claude-session-manager) |
+|---|---|---|---|
+| **Approach** | Picker — find and switch | All-in-one — embedded terminal | Popup picker |
+| **Terminal** | Full-size tmux panes | Tiny embedded window | Popup overlay |
+| **Session mgmt** | No — use tmux directly | Yes — creates/manages sessions | Yes — creates sessions |
+| **Workflow** | Non-prescriptive — works with any tmux layout | Prescriptive — sessions live inside the tool | Tied to its own session model |
+| **State** | None — completely stateless | Manages its own state | Manages its own state |
+| **AI summaries** | Yes — Haiku-generated | No | No |
+| **Background tasks** | Yes — tracks shell/monitor/wakeup | No | No |
+| **Subagents** | Yes — shows spawned agents | No | No |
+
+**grecon's opinion:** Your terminal is yours. Grecon doesn't take it over or force you into a tiny window — it's a picker you open, switch sessions with, and close. Your Claude sessions run in full-size tmux panes that you control. If you want session creation, use `claude` directly or a launcher. If you want persistence, use tmux-resurrect.
+
 ## Features
 
 - **AI summaries** — each session gets a one-line Haiku-generated summary of what the agent is doing
