@@ -106,6 +106,8 @@ The TUI subscribes to the server and gets instant updates. That's it — no data
 
 **What might be added:** new stateless data in the existing picker — tmux session properties, working directory, etc. Just more data read from tmux or the JSONL. No new screens, no state.
 
+**Instant startup:** The picker opens instantly because the server is always running and has fresh data ready. No waiting for discovery on launch — the TUI connects, gets the latest snapshot, and renders immediately. That's the whole reason for the client/server split.
+
 **Time horizon:** This tool is meant to be useful for the next 12-24 months of AI tooling evolution, not the next 10 years. Someone will build something better. The goal is to help people now while Claude Code is tmux-based, not to build the perfect tool for a future that's moving too fast to predict.
 
 **What about session creation / resume?** Use `claude` directly, or build a launcher as a separate project. For persisting sessions across reboots, use [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect). Grecon composes with these tools, it doesn't replace them.
