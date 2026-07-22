@@ -1,4 +1,4 @@
-module grecon
+module github.com/mavenraven/grecon
 
 go 1.25.6
 

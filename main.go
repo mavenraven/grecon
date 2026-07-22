@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"grecon/client"
-	"grecon/server"
+	"github.com/mavenraven/grecon/client"
+	"github.com/mavenraven/grecon/server"
 
 	"github.com/spf13/cobra"
 )

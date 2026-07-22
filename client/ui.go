@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"grecon/server"
+	"github.com/mavenraven/grecon/server"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"grecon/server"
+	"github.com/mavenraven/grecon/server"
 )
 
 type RowKind int
