@@ -49,7 +49,7 @@ tmux set @grecon/team "platform"
 
 ### Session persistence
 
-Use [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect), [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum), and [tmux-assistant-resurrect](https://github.com/nicksp/tmux-assistant-resurrect) to persist Claude sessions across reboots.
+Use [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect), [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum), and [tmux-assistant-resurrect](https://github.com/timvw/tmux-assistant-resurrect) to persist Claude sessions across reboots.
 
 ## License
 
